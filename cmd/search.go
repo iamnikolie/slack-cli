@@ -1,0 +1,193 @@
+package cmd
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/url"
+	"strconv"
+	"strings"
+
+	"github.com/spf13/cobra"
+)
+
+var (
+	searchIn       string
+	searchFrom     string
+	searchLimit    int
+	searchOrder    string
+	searchWithMeta bool
+)
+
+var searchCmd = &cobra.Command{
+	Use:   "search <query>",
+	Short: "Search messages across the workspace (search.messages)",
+	Long:  "Search messages across pages up to --limit (1–10000, at most 100 per page).\nAlways reports total, returned, has_more and has_next_page on stderr.\nUse --json --with-meta for {matches,meta}; --fields projects matches only.\nSlack search totals describe indexed matches, not every message in channel history.",
+	Args:  cobra.MinimumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		query := buildSearchQuery(strings.Join(args, " "), searchIn, searchFrom)
+		if searchWithMeta && !jsonOutput && outputFormat != "json" {
+			return fmt.Errorf("--with-meta requires --json or --format json")
+		}
+		result, err := fetchSearch(cmd.Context(), query, searchLimit, searchOrder)
+		if err != nil {
+			return err
+		}
+		meta := result.SearchMeta
+		fmt.Fprintf(stderr, "Search: total=%d returned=%d has_more=%t has_next_page=%t pages_fetched=%d page_count=%d omitted_from_last_page=%d\n", meta.Total, meta.Returned, meta.HasMore, meta.HasNextPage, meta.PagesFetched, meta.PageCount, meta.OmittedFromLastPage)
+		searchPaginationHint(meta, searchLimit)
+		b, err := json.Marshal(result.Matches)
+		if err != nil {
+			return err
+		}
+		if jsonOutput || outputFormat == "json" {
+			if searchWithMeta {
+				return emitSearchEnvelope(result)
+			}
+			return emitList(b, nil)
+		}
+		items, err := decodeArray(b)
+		if err != nil {
+			return err
+		}
+		for _, item := range items {
+			if ts, ok := item["ts"].(string); ok {
+				item["date"] = tsClock(ts)
+			}
+			if item["username"] == nil || item["username"] == "" {
+				item["username"] = item["user"]
+			}
+		}
+		b, err = json.Marshal(items)
+		if err != nil {
+			return err
+		}
+		return emitList(b, []string{"date", "channel.name", "username", "text", "permalink"})
+	},
+}
+
+// buildSearchQuery appends in:/from: operators to the user's query. Channel and
+// user refs are kept as the user typed them (Slack search resolves names).
+func buildSearchQuery(base, in, from string) string {
+	parts := []string{base}
+	if in != "" {
+		parts = append(parts, "in:"+strings.TrimPrefix(in, "#"))
+	}
+	if from != "" {
+		parts = append(parts, "from:"+strings.TrimPrefix(from, "@"))
+	}
+	return strings.Join(parts, " ")
+}
+
+func init() {
+	searchCmd.Flags().StringVar(&searchIn, "in", "", "restrict to a channel (#name)")
+	searchCmd.Flags().StringVar(&searchFrom, "from", "", "restrict to a sender (@name)")
+	searchCmd.Flags().IntVar(&searchLimit, "limit", 20, "max matches across pages (1–10000)")
+	searchCmd.Flags().StringVar(&searchOrder, "sort-dir", "desc", "timestamp order: asc or desc")
+	searchCmd.Flags().BoolVar(&searchWithMeta, "with-meta", false, "with --json, wrap projected matches with total/returned/pagination metadata")
+	rootCmd.AddCommand(searchCmd)
+}
+
+type searchMeta struct {
+	Total               int  `json:"total"`
+	Returned            int  `json:"returned"`
+	HasMore             bool `json:"has_more"`
+	HasNextPage         bool `json:"has_next_page"`
+	PagesFetched        int  `json:"pages_fetched"`
+	Page                int  `json:"page"`
+	PageCount           int  `json:"page_count"`
+	PageSize            int  `json:"page_size"`
+	OmittedFromLastPage int  `json:"omitted_from_last_page"`
+}
+
+type searchResult struct {
+	Matches    []json.RawMessage `json:"matches"`
+	SearchMeta searchMeta        `json:"meta"`
+}
+
+func searchPaginationHint(meta searchMeta, limit int) {
+	if !meta.HasMore {
+		return
+	}
+	if meta.Returned == limit && limit < 10000 {
+		fmt.Fprintf(stderr, "More indexed matches remain; pass --limit %d or narrow the query.\n", min(limit*2, 10000))
+	} else {
+		fmt.Fprintln(stderr, "Search results are partial; narrow the query to inspect remaining matches (Slack supports at most 100 pages).")
+	}
+}
+
+func emitSearchEnvelope(result searchResult) error {
+	// --fields selects message fields; completeness metadata remains intact.
+	for i, match := range result.Matches {
+		result.Matches[i] = projectOne(match, fieldsFlag)
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	return writeRaw(data)
+}
+
+// Keep count constant across pages: changing it shifts Slack's page offsets.
+// Slack supports at most 100 results/page and 100 pages.
+func fetchSearch(ctx context.Context, query string, limit int, order string) (searchResult, error) {
+	result := searchResult{Matches: make([]json.RawMessage, 0)}
+	if limit <= 0 || limit > 10000 {
+		return result, fmt.Errorf("--limit must be between 1 and 10000 (Slack's page limit)")
+	}
+	if order != "asc" && order != "desc" {
+		return result, fmt.Errorf("--sort-dir must be asc or desc")
+	}
+	count := min(limit, 100)
+	for page := 1; len(result.Matches) < limit && page <= 100; page++ {
+		q := url.Values{
+			"query": {query}, "count": {strconv.Itoa(count)},
+			"page": {strconv.Itoa(page)}, "sort": {"timestamp"}, "sort_dir": {order},
+		}
+		raw, err := cli.Call(ctx, "search.messages", q)
+		if err != nil {
+			return result, err
+		}
+		var env struct {
+			Messages struct {
+				Matches []json.RawMessage `json:"matches"`
+				Total   *int              `json:"total"`
+				Paging  struct {
+					Pages int `json:"pages"`
+					Total int `json:"total"`
+				} `json:"paging"`
+				Pagination struct {
+					PageCount  int `json:"page_count"`
+					TotalCount int `json:"total_count"`
+				} `json:"pagination"`
+			} `json:"messages"`
+		}
+		if err := json.Unmarshal(raw, &env); err != nil {
+			return result, err
+		}
+		meta := &result.SearchMeta
+		meta.Total = max(env.Messages.Paging.Total, env.Messages.Pagination.TotalCount)
+		if env.Messages.Total != nil {
+			meta.Total = *env.Messages.Total
+		}
+		meta.PageCount = max(env.Messages.Paging.Pages, env.Messages.Pagination.PageCount)
+		if meta.PageCount == 0 && meta.Total > 0 {
+			meta.PageCount = (meta.Total + count - 1) / count
+		}
+		meta.Page, meta.PagesFetched, meta.PageSize = page, page, count
+		meta.HasNextPage = page < meta.PageCount && page < 100
+		remaining := limit - len(result.Matches)
+		matches := env.Messages.Matches
+		if len(matches) > remaining {
+			meta.OmittedFromLastPage = len(matches) - remaining
+			matches = matches[:remaining]
+		}
+		result.Matches = append(result.Matches, matches...)
+		meta.Returned = len(result.Matches)
+		meta.HasMore = meta.Total > meta.Returned || meta.HasNextPage || meta.OmittedFromLastPage > 0
+		if len(matches) == 0 || !meta.HasNextPage {
+			break
+		}
+	}
+	return result, nil
+}
