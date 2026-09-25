@@ -163,6 +163,9 @@ func (c *Client) Call(ctx context.Context, method string, params url.Values) (js
 			if head.Needed == "" && method == "files.info" {
 				head.Needed = "files:read"
 			}
+			if head.Needed == "" && (method == "files.getUploadURLExternal" || method == "files.completeUploadExternal") {
+				head.Needed = "files:write"
+			}
 			return nil, &APIError{Code: head.Error, Needed: head.Needed, Provided: head.Provided, Method: method, Profile: c.Profile}
 		}
 		if resp.StatusCode >= 400 {

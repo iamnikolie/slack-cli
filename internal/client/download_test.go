@@ -104,3 +104,18 @@ func TestDownloadPropagatesWriteFailure(t *testing.T) {
 	_, err := c.Download(context.Background(), "https://files.slack.com/private", "image/png", failedWriter{})
 	require.ErrorContains(t, err, "disk full")
 }
+
+func TestUploadRejectsUntrustedHostAndOmitsToken(t *testing.T) {
+	c := New("secret", "https://slack.com/api")
+	c.http.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Empty(t, r.Header.Get("Authorization"))
+		return downloadResponse(r, 200, "OK"), nil
+	})
+	require.NoError(t, c.Upload(context.Background(), "https://files.slack.com/upload/v1/x", strings.NewReader("abc"), 3))
+	require.Error(t, c.Upload(context.Background(), "https://evil.test/upload", strings.NewReader("abc"), 3))
+	c.http.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return downloadResponse(r, 500, "boom"), nil
+	})
+	require.ErrorContains(t, c.Upload(context.Background(), "https://files.slack.com/upload/v1/x", strings.NewReader("abc"), 3), "HTTP 500")
+}

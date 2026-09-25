@@ -6,7 +6,7 @@ Agent-facing Slack from Bash. Read channels/threads, post/reply, search.
 Create a Slack app, add user-token scopes, install to the workspace, copy the
 **User OAuth Token** (`xoxp-...`). Scopes:
 `channels:read groups:read im:read mpim:read channels:history groups:history
-im:history mpim:history chat:write search:read users:read files:read`.
+im:history mpim:history chat:write search:read users:read files:read files:write`.
 
 `slk --config <ws> config init --token xoxp-...` (or pipe the token on stdin).
 
@@ -39,6 +39,11 @@ miss it refetches once. `slk sync` refreshes it manually.
   Default filename is `<file-id>-<name>` in the current directory. Existing
   files are never overwritten; failed downloads leave no final file.
   Transcripts display file IDs; for message links, inspect the thread first.
+- `slk files upload <path>... [-c #chan] [--thread ts] [--comment text | --comment-file -] [--title t] [--name n]`
+  — upload local files; requires `files:write`. With `-c` all files are shared
+  in one message (optionally in a thread, with a comment); without it they stay
+  private. `--title`/`--name` only for a single file. Paths are validated before
+  any upload. Output: `id`, `name`, `bytes` per file.
 - `slk send <#chan|id> <text> [--thread ts] [--body-file -] [--id-only]`
 - `slk reply <#chan|id> <ts> <text>` — sugar for a thread reply.
 - `slk update <#chan|id> <ts> <text>` — your own message only.

@@ -63,7 +63,7 @@ invites.
 2. Name it (e.g. `slk`), pick your workspace.
 3. **OAuth & Permissions** → **Scopes** → **User Token Scopes**, add:
    `channels:read groups:read im:read mpim:read channels:history groups:history
-   im:history mpim:history chat:write search:read users:read files:read`.
+   im:history mpim:history chat:write search:read users:read files:read files:write`.
 4. **Install to Workspace** → **Allow**.
 5. Copy the **User OAuth Token** (`xoxp-…`).
 
@@ -156,7 +156,17 @@ Run `slk skill` for the full agent-facing reference, or `slk <command> --help`.
 slk --config work files download F01234567
 slk --config work files download 'https://acme.slack.com/files/U01234567/F01234567/screenshot.png' -o ./screenshot.png
 slk --config work --json files download F01234567 -o ./downloads/
+slk --config work files upload ./report.pdf -c '#general' --comment 'Weekly report'
+slk --config work files upload a.png b.png -c '#design' --thread 1700000000.000100
+echo 'details' | slk --config work files upload ./log.txt -c @alice --comment-file -
 ```
+
+`files upload` requires `files:write`. It uses Slack's external upload flow
+(`files.getUploadURLExternal` → POST bytes → `files.completeUploadExternal`).
+The pre-signed upload URL never receives the OAuth token and must be a Slack file
+host. With `--channel` all files are shared in one message (optionally in
+`--thread`, with `--comment`/`--comment-file`); without it they stay private to
+you. All paths are checked (exist, regular, non-empty) before any upload starts.
 
 Requires `files:read`. The command calls `files.info`, then downloads the original
 using `url_private_download` (or `url_private`) with the profile's bearer token.
