@@ -64,6 +64,9 @@ invites.
 3. **OAuth & Permissions** → **Scopes** → **User Token Scopes**, add:
    `channels:read groups:read im:read mpim:read channels:history groups:history
    im:history mpim:history chat:write search:read users:read files:read files:write`.
+   Optional, per feature: `reactions:write` (`react`), `im:write` (`dm` to
+   someone you have no DM with yet), `pins:read` and `bookmarks:read`
+   (`channel info`). Commands report a missing optional scope by name.
 4. **Install to Workspace** → **Allow**.
 5. Copy the **User OAuth Token** (`xoxp-…`).
 
@@ -126,6 +129,8 @@ Run `slk skill` for the full agent-facing reference, or `slk <command> --help`.
 - `slk channels` (alias `channel list`) — `--types public,private,im,mpim`,
   `--filter`, `--limit`. DMs (im) list under the partner's handle.
 - `slk channel view <#chan|id>` — metadata.
+- `slk channel info <#chan|id>` — topic, purpose, members, creator, bookmarks
+  and pinned messages; a section whose scope is missing is reported, not fatal.
 - Listings include `type` (`public`, `private`, `im`, `mpim`).
 - `slk activity --limit 200` — overview grouped by channel, newest first:
   latest indexed message date, type, preview, permalink, and sampled count.
@@ -135,29 +140,63 @@ Run `slk skill` for the full agent-facing reference, or `slk <command> --help`.
   Requires `search:read`. JSON includes query, sample size, total matches,
   truncation status, and channel rows.
 
+### Catching up
+- `slk unread [#chan...] --since 7d` — messages past your channel read marker,
+  plus threads you follow that have unread replies (only those replies). With no
+  channels, active ones are discovered through search. Read-only: nothing is
+  marked read.
+- `slk mentions --since 7d` — messages that mention you.
+- `slk digest [#chan...] --since 1d` — one transcript across channels with
+  threads inline (`--replies=false` to collapse them).
+- `slk tail <#chan...>` — only what is new since the previous `tail` of each
+  channel; cursors live in `~/.slk/<profile>/cursors.json` (`--peek` leaves
+  them). A channel's first tail starts at `--since` (default 1d).
+
 ### Reading
-- `slk history <#chan|id>` — `--limit`, `--since`/`--until` (YYYY-MM-DD/epoch/ts),
-  `--oldest`/`--latest` (ts). Threads collapse to `↳ N replies (ts=…)`.
+- `slk history <#chan|@user|id>` — `--limit` (latest N), `--since`/`--until`,
+  `--oldest`/`--latest` (ts). Printed oldest first; `--desc` flips. Threads
+  collapse to `↳ N replies (ts=…)`.
   - `--replies` expands every thread inline under its parent (one
     `conversations.replies` call per thread; `--replies-limit N`, default 50,
     then `↳ +K more replies: slk thread …`). JSON nests them under `replies`;
     CSV/TSV/table emit one row per message.
   - `--thread <ts|permalink>` reads one thread instead of the channel (same as
     `slk thread`); a thread permalink as the only argument implies it.
-- `slk thread <#chan|id> <ts|permalink>` — all replies in a thread.
+- `slk thread <#chan|id> <ts|permalink>` — all replies in a thread
+  (`--since`/`--until` window long ones).
+- `slk get <permalink | #chan ts> [--context N]` — one message, marked `»`, with
+  N messages on each side; a top-level message shows its replies, a reply shows
+  its thread around it.
 - A reply's permalink (`…?thread_ts=<parent>`) resolves to its parent wherever
   a thread is expected (`thread`, `history --thread`, `reply`, `send --thread`,
   `files upload --thread`).
+- Times: `2h`, `3d`, `1w`, `today`, `yesterday`, `YYYY-MM-DD[ HH:MM]` (local
+  time), RFC3339, epoch seconds, or a ts.
 - Plain transcripts include profile/channel headings, full dates with local UTC
-  offsets, and message links (including thread context for replies). Link
-  generation uses one `auth.test` lookup per transcript; failure emits a warning
-  and leaves messages readable. JSON and tabular exports skip this lookup.
+  offsets, `ts=` in each header, decoded markup (`@name`, `#channel`,
+  `label (url)`, unescaped `&<>`), an `(edited)` mark, files, attachments and
+  link unfurls (`▸`), reactions, and message links. Bot messages with empty text
+  fall back to their Block Kit text. `--no-links` drops link lines,
+  `--max-chars N` caps each message. Link generation uses one `auth.test`
+  lookup per run; failure emits a warning and leaves messages readable.
 
 ### Posting
-- `slk send <#chan|id> <text>` — `--thread <ts>`, `--body-file -`, `--id-only`.
-- `slk reply <#chan|id> <ts> <text>` — sugar for a thread reply.
+- Text is sent as standard Markdown (`markdown_text`: `**bold**`,
+  `[label](url)`, lists, code; 12,000 characters max). `--mrkdwn` sends Slack's
+  own mrkdwn in `text` instead.
+- `--dry-run` (any write command) prints the resolved channel, thread, format
+  and text without sending.
+- `slk send <#chan|@user|id> <text>` — `--thread <ts|permalink>`, `--at`,
+  `--body-file -`, `--id-only`.
+- `slk reply <#chan|id> <ts|permalink> <text>` — sugar for a thread reply.
+- `slk dm <@user> <text>` — the DM is opened when none exists (`im:write`).
+- `--at` on send/reply/dm schedules the message: `+2h`, `in 30m`, `16:00` (next
+  occurrence), `tomorrow 09:00`, `YYYY-MM-DD HH:MM`. `slk scheduled [#chan]`
+  lists pending ones; `slk scheduled delete <#chan> <id> --yes` cancels.
 - `slk update <#chan|id> <ts> <text>` — edit your own message.
 - `slk delete <#chan|id> <ts>` — requires `--yes`; your own message only.
+- `slk react <permalink | #chan ts> <:emoji:>` (`--remove`, or `slk unreact`) —
+  needs `reactions:write`; a reply's permalink reacts on the reply.
 
 ### Attachments
 
@@ -203,9 +242,12 @@ See Slack's [file authentication requirements](https://docs.slack.dev/reference/
 and [files.info scopes](https://docs.slack.dev/reference/methods/files.info/).
 
 ### Search
-- `slk search <query>` — `--in #chan`, `--from @user`, `--limit` (walks result
-  pages, 100/page). Native Slack operators (`in:`, `from:`, `after:`) also work
-  inside the query.
+- `slk search [query]` — `--in #chan`, `--from @user|me`, `--to @user|me`,
+  `--since`/`--until`/`--on` (days; `--since` includes its own day), `--has
+  link|pin|reaction|:emoji:` (repeatable), `--thread-only`, `--limit` (walks
+  result pages, 100/page). Filters work without a query. Native Slack operators
+  (`in:`, `from:`, `after:`) also work inside the query. Rendered text is
+  decoded like transcripts.
 - `--sort-dir asc|desc` controls timestamp order (default `desc`). Rendered
   results include dates and channel names.
 - `--limit` walks pages, accepts 1–10000, and keeps a fixed page size (up to 100).
@@ -229,7 +271,9 @@ still included. Use plain transcripts or select fields for concise reading:
 
 ```bash
 slk --config work thread C01234567 1700000000.000100
-slk --config work history '#general' --since 2026-09-01 --replies
+slk --config work history '#general' --since 3d --replies --no-links
+slk --config work unread --since 3d
+slk --config work get 'https://acme.slack.com/archives/C01234567/p1700000000000100' --context 3
 slk --config work --json --fields ts,user,text,thread_ts thread C01234567 1700000000.000100
 slk --config work search 'in:general on:2026-09-10' --sort-dir asc --limit 100
 slk --config work --json --fields ts,user,text,permalink,thread_ts search 'in:general' --with-meta
@@ -237,7 +281,8 @@ slk --config work --fields messages.matches api search.messages -f 'query=in:gen
 ```
 
 ### Users
-- `slk users` — `--filter`. `slk user view <@user|id>`.
+- `slk users` — `--filter`. `slk user <@user|id>` (or `user view`) — title,
+  status, presence, local time and time zone.
 
 ## Persistent flags
 
