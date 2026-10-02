@@ -43,6 +43,7 @@ var (
 	assumeYes    bool
 	fieldsFlag   []string
 	noLinks      bool
+	dryRun       bool
 	maxChars     int
 
 	cfg *config.Config
@@ -97,6 +98,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&assumeYes, "yes", false, "confirm destructive operations")
 	rootCmd.PersistentFlags().StringSliceVar(&fieldsFlag, "fields", nil, "comma-separated output fields, including JSON (supports dotted object paths)")
 
+	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "write commands: resolve and print what would be sent, send nothing")
 	rootCmd.PersistentFlags().BoolVar(&noLinks, "no-links", false, "transcripts: omit per-message permalink lines (ts= still shown)")
 	rootCmd.PersistentFlags().IntVar(&maxChars, "max-chars", 0, "transcripts: cap each message text at N characters (0 = no cap)")
 

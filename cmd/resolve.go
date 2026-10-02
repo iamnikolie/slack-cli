@@ -450,9 +450,14 @@ func workspaceURL(ctx context.Context) string {
 
 // channelRef resolves ref to a channel ID, refetching the directory once on a
 // cache miss (#channel/@... not yet synced).
+//
+// @user (or a raw user ID) resolves to the DM with that user.
 func channelRef(ctx context.Context, ref string) (string, error) {
 	if isChannelID(ref) {
 		return ref, nil
+	}
+	if strings.HasPrefix(ref, "@") || isUserID(ref) {
+		return dmChannel(ctx, ref)
 	}
 	d, err := loadDirectory(ctx)
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/iamnikolie/slack-cli/internal/client"
 	"github.com/stretchr/testify/assert"
@@ -16,10 +17,20 @@ import (
 )
 
 func TestBuildSearchQuery(t *testing.T) {
-	assert.Equal(t, "deploy failed", buildSearchQuery("deploy failed", "", ""))
-	assert.Equal(t, "deploy in:ops", buildSearchQuery("deploy", "#ops", ""))
-	assert.Equal(t, "deploy from:mako", buildSearchQuery("deploy", "", "@mako"))
-	assert.Equal(t, "deploy in:ops from:mako", buildSearchQuery("deploy", "#ops", "@mako"))
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	q := func(base string, f searchFilters) string {
+		got, err := buildSearchQuery(base, f, now)
+		require.NoError(t, err)
+		return got
+	}
+	assert.Equal(t, "deploy failed", q("deploy failed", searchFilters{}))
+	assert.Equal(t, "deploy in:ops from:mako", q("deploy", searchFilters{In: "#ops", From: "@mako"}))
+	assert.Equal(t, "to:me after:2026-09-28 before:2026-10-02 has:link has:pin is:thread",
+		q("", searchFilters{To: "me", Since: "3d", Until: "today", Has: []string{"link,pin"}, Threads: true}))
+	assert.Equal(t, "on:2026-09-15", q("", searchFilters{On: "2026-09-15"}))
+
+	_, err := buildSearchQuery("", searchFilters{}, now)
+	assert.Error(t, err)
 }
 
 func TestSearchCompleteness(t *testing.T) {

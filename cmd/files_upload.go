@@ -170,6 +170,11 @@ var filesUploadCmd = &cobra.Command{
 			}
 			o.Comment = body
 		}
+		if dryRun {
+			plan := map[string]any{"dry_run": true, "files": args, "channel": o.Channel, "thread_ts": o.Thread, "comment": o.Comment}
+			b, _ := json.Marshal(plan)
+			return emitObj(b, []string{"dry_run", "files", "channel", "thread_ts", "comment"})
+		}
 		result, err := uploadFiles(cmd.Context(), args, o)
 		if err != nil {
 			return err

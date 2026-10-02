@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 
@@ -12,9 +13,6 @@ var deleteCmd = &cobra.Command{
 	Short: "Delete your own message (chat.delete); requires --yes",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !assumeYes {
-			return fmt.Errorf("refusing to delete without --yes")
-		}
 		id, err := channelRef(cmd.Context(), args[0])
 		if err != nil {
 			return err
@@ -22,6 +20,13 @@ var deleteCmd = &cobra.Command{
 		_, ts, ok := parseMessageRef(args[1])
 		if !ok {
 			return errInvalidTS(args[1])
+		}
+		if dryRun {
+			b, _ := json.Marshal(map[string]any{"dry_run": true, "method": "chat.delete", "channel": id, "ts": ts})
+			return emitObj(b, []string{"dry_run", "method", "channel", "ts"})
+		}
+		if !assumeYes {
+			return fmt.Errorf("refusing to delete without --yes")
 		}
 		q := url.Values{}
 		q.Set("channel", id)

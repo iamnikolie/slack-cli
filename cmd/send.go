@@ -3,16 +3,14 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 
 	"github.com/spf13/cobra"
 )
 
 var (
-	sendThread   string
-	sendBodyFile string
-	sendIDOnly   bool
+	sendThread string
+	sendFlags  msgFlags
 )
 
 // readBody returns text from the positional arg, or from --body-file (use "-"
@@ -42,19 +40,11 @@ func readBody(arg, bodyFile string) (string, error) {
 }
 
 var sendCmd = &cobra.Command{
-	Use:   "send <#channel|id> [text]",
-	Short: "Post a message (chat.postMessage)",
+	Use:   "send <#channel|@user|id> [text]",
+	Short: "Post a message (Markdown by default; --at schedules it)",
 	Args:  cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		id, err := channelRef(cmd.Context(), args[0])
-		if err != nil {
-			return err
-		}
-		text := ""
-		if len(args) == 2 {
-			text = args[1]
-		}
-		body, err := readBody(text, sendBodyFile)
 		if err != nil {
 			return err
 		}
@@ -66,31 +56,16 @@ var sendCmd = &cobra.Command{
 			}
 			thread = ts
 		}
-		raw, err := postMessage(cmd, id, body, thread)
-		if err != nil {
-			return err
+		text := ""
+		if len(args) == 2 {
+			text = args[1]
 		}
-		if sendIDOnly {
-			return printIDOnly(raw, "ts")
-		}
-		return emitObj(raw, []string{"ok", "channel", "ts"})
+		return runMessage(cmd.Context(), id, thread, text, &sendFlags)
 	},
-}
-
-// postMessage sends body to channel, optionally as a thread reply.
-func postMessage(cmd *cobra.Command, channel, body, threadTS string) ([]byte, error) {
-	q := url.Values{}
-	q.Set("channel", channel)
-	q.Set("text", body)
-	if threadTS != "" {
-		q.Set("thread_ts", threadTS)
-	}
-	return cli.Call(cmd.Context(), "chat.postMessage", q)
 }
 
 func init() {
 	sendCmd.Flags().StringVar(&sendThread, "thread", "", "reply in this thread (parent ts or permalink)")
-	sendCmd.Flags().StringVar(&sendBodyFile, "body-file", "", "read text from a file ('-' for stdin)")
-	sendCmd.Flags().BoolVar(&sendIDOnly, "id-only", false, "print only the new message ts")
+	sendFlags.register(sendCmd, true)
 	rootCmd.AddCommand(sendCmd)
 }

@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -14,6 +15,12 @@ import (
 var (
 	searchIn       string
 	searchFrom     string
+	searchTo       string
+	searchSince    string
+	searchUntil    string
+	searchOn       string
+	searchHas      []string
+	searchThreads  bool
 	searchLimit    int
 	searchOrder    string
 	searchWithMeta bool
@@ -23,9 +30,15 @@ var searchCmd = &cobra.Command{
 	Use:   "search <query>",
 	Short: "Search messages across the workspace (search.messages)",
 	Long:  "Search messages across pages up to --limit (1–10000, at most 100 per page).\nAlways reports total, returned, has_more and has_next_page on stderr.\nUse --json --with-meta for {matches,meta}; --fields projects matches only.\nSlack search totals describe indexed matches, not every message in channel history.",
-	Args:  cobra.MinimumNArgs(1),
+	Args:  cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		query := buildSearchQuery(strings.Join(args, " "), searchIn, searchFrom)
+		query, err := buildSearchQuery(strings.Join(args, " "), searchFilters{
+			In: searchIn, From: searchFrom, To: searchTo, Since: searchSince, Until: searchUntil,
+			On: searchOn, Has: searchHas, Threads: searchThreads,
+		}, time.Now())
+		if err != nil {
+			return err
+		}
 		if searchWithMeta && !jsonOutput && outputFormat != "json" {
 			return fmt.Errorf("--with-meta requires --json or --format json")
 		}
@@ -86,22 +99,69 @@ func emitSearchMatches(ctx context.Context, result searchResult) error {
 	return emitList(b, []string{"date", "channel.name", "username", "text", "permalink"})
 }
 
-// buildSearchQuery appends in:/from: operators to the user's query. Channel and
-// user refs are kept as the user typed them (Slack search resolves names).
-func buildSearchQuery(base, in, from string) string {
-	parts := []string{base}
-	if in != "" {
-		parts = append(parts, "in:"+strings.TrimPrefix(in, "#"))
+type searchFilters struct {
+	In, From, To     string
+	Since, Until, On string
+	Has              []string
+	Threads          bool
+}
+
+// buildSearchQuery appends Slack search operators for the filters. Channel
+// and user refs stay as typed (Slack search resolves names). Slack's after:
+// and before: are exclusive whole days, so --since steps back a day to
+// include its own date.
+func buildSearchQuery(base string, f searchFilters, now time.Time) (string, error) {
+	var parts []string
+	if base = strings.TrimSpace(base); base != "" {
+		parts = append(parts, base)
 	}
-	if from != "" {
-		parts = append(parts, "from:"+strings.TrimPrefix(from, "@"))
+	if f.In != "" {
+		parts = append(parts, "in:"+strings.TrimPrefix(f.In, "#"))
 	}
-	return strings.Join(parts, " ")
+	if f.From != "" {
+		parts = append(parts, "from:"+strings.TrimPrefix(f.From, "@"))
+	}
+	if f.To != "" {
+		parts = append(parts, "to:"+strings.TrimPrefix(f.To, "@"))
+	}
+	for _, b := range []struct {
+		value, op string
+		shift     int
+	}{{f.Since, "after:", -1}, {f.Until, "before:", 0}, {f.On, "on:", 0}} {
+		if b.value == "" {
+			continue
+		}
+		t, err := parsePast(b.value, now)
+		if err != nil {
+			return "", err
+		}
+		parts = append(parts, b.op+t.AddDate(0, 0, b.shift).Format("2006-01-02"))
+	}
+	for _, h := range f.Has {
+		for _, v := range strings.Split(h, ",") {
+			if v = strings.TrimSpace(v); v != "" {
+				parts = append(parts, "has:"+v)
+			}
+		}
+	}
+	if f.Threads {
+		parts = append(parts, "is:thread")
+	}
+	if len(parts) == 0 {
+		return "", fmt.Errorf("give a query or at least one filter (--in, --from, --since, …)")
+	}
+	return strings.Join(parts, " "), nil
 }
 
 func init() {
 	searchCmd.Flags().StringVar(&searchIn, "in", "", "restrict to a channel (#name)")
-	searchCmd.Flags().StringVar(&searchFrom, "from", "", "restrict to a sender (@name)")
+	searchCmd.Flags().StringVar(&searchFrom, "from", "", "restrict to a sender (@name, or me)")
+	searchCmd.Flags().StringVar(&searchTo, "to", "", "messages sent to (@name, or me: your DMs)")
+	searchCmd.Flags().StringVar(&searchSince, "since", "", "on/after this day (3d, 1w, yesterday, YYYY-MM-DD)")
+	searchCmd.Flags().StringVar(&searchUntil, "until", "", "before this day")
+	searchCmd.Flags().StringVar(&searchOn, "on", "", "on this day")
+	searchCmd.Flags().StringSliceVar(&searchHas, "has", nil, "has:link, pin, reaction, or :emoji: (repeatable)")
+	searchCmd.Flags().BoolVar(&searchThreads, "thread-only", false, "only messages in threads (is:thread)")
 	searchCmd.Flags().IntVar(&searchLimit, "limit", 20, "max matches across pages (1–10000)")
 	searchCmd.Flags().StringVar(&searchOrder, "sort-dir", "desc", "timestamp order: asc or desc")
 	searchCmd.Flags().BoolVar(&searchWithMeta, "with-meta", false, "with --json, wrap projected matches with total/returned/pagination metadata")

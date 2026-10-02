@@ -1,16 +1,14 @@
 package cmd
 
 import (
-	"net/url"
-
 	"github.com/spf13/cobra"
 )
 
-var updateBodyFile string
+var updateFlags msgFlags
 
 var updateCmd = &cobra.Command{
-	Use:   "update <#channel|id> <ts> [text]",
-	Short: "Edit your own message (chat.update)",
+	Use:   "update <#channel|@user|id> <ts> [text]",
+	Short: "Edit your own message (chat.update; Markdown by default)",
 	Args:  cobra.RangeArgs(2, 3),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		id, err := channelRef(cmd.Context(), args[0])
@@ -25,23 +23,19 @@ var updateCmd = &cobra.Command{
 		if len(args) == 3 {
 			text = args[2]
 		}
-		body, err := readBody(text, updateBodyFile)
+		body, err := readBody(text, updateFlags.bodyFile)
 		if err != nil {
 			return err
 		}
-		q := url.Values{}
-		q.Set("channel", id)
-		q.Set("ts", ts)
-		q.Set("text", body)
-		raw, err := cli.Call(cmd.Context(), "chat.update", q)
+		raw, err := deliver(cmd.Context(), outgoing{Channel: id, TS: ts, Text: body}, &updateFlags)
 		if err != nil {
 			return err
 		}
-		return emitObj(raw, []string{"ok", "channel", "ts"})
+		return emitDelivered(raw, &updateFlags)
 	},
 }
 
 func init() {
-	updateCmd.Flags().StringVar(&updateBodyFile, "body-file", "", "read text from a file ('-' for stdin)")
+	updateFlags.register(updateCmd, false)
 	rootCmd.AddCommand(updateCmd)
 }
