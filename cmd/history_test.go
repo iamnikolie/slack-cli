@@ -63,9 +63,9 @@ func TestExpandRepliesAttachesThreadsUnderParents(t *testing.T) {
 	transcript, err := renderTranscript(out, nil, "C0123456", "", "")
 	require.NoError(t, err)
 	assert.Contains(t, transcript, "    ↳ [")
-	assert.Contains(t, transcript, "r1\tts=1700000100.000200")
+	assert.Contains(t, transcript, "ts=1700000100.000200 @system: r1")
 	assert.Contains(t, transcript, "↳ +3 more replies: slk thread C0123456 1700000000.000100")
-	assert.Equal(t, 1, strings.Count(transcript, "parent\t")) // parent not repeated among replies
+	assert.Equal(t, 1, strings.Count(transcript, ": parent\n")) // parent not repeated among replies
 
 	flat, err := decodeArray(flattenReplies(out))
 	require.NoError(t, err)

@@ -66,3 +66,43 @@ func TestTranscriptShowsDownloadableFileID(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "file F01234567: screen.png (image/png, 1234 bytes)")
 }
+
+func TestExpandMentionsDecodesSlackMarkup(t *testing.T) {
+	d := &cache.Directory{
+		Users:    []cache.User{{ID: "U999", Name: "mako"}},
+		Channels: []cache.Channel{{ID: "C111", Name: "general"}},
+	}
+	in := "<@U999> see <#C111> and <#C222|design>, ping <!subteam^S1|@devs> <!here> " +
+		"<https://a.io/x?a=1&amp;b=2|the doc> <https://b.io> <mailto:x@y.io|x@y.io> " +
+		"<!date^1700000000^{date}|Nov 14> a &lt; b &amp;&amp; c &gt; d"
+	assert.Equal(t, "@mako see #general and #design, ping @devs @here "+
+		"the doc (https://a.io/x?a=1&b=2) https://b.io x@y.io "+
+		"Nov 14 a < b && c > d", expandMentions(in, d))
+	assert.Equal(t, "@U000 #C000 @S2", expandMentions("<@U000> <#C000> <!subteam^S2>", nil))
+}
+
+func TestTranscriptRichMessage(t *testing.T) {
+	oldNoLinks, oldMax := noLinks, maxChars
+	t.Cleanup(func() { noLinks, maxChars = oldNoLinks, oldMax })
+	msg := []byte(`[{"user":"U1","text":"look <https://loom.com/x>","ts":"1700000000.000100","edited":{"user":"U1","ts":"1700000001.000000"},
+	  "reactions":[{"name":"+1","count":3,"users":[]},{"name":"eyes","count":1}],
+	  "attachments":[{"service_name":"Loom","title":"Meeting","from_url":"https://loom.com/x","text":"long summary"},
+	                 {"title":"Deploy failed","title_link":"https://ci/1","text":"step &lt;b&gt; &amp; more"}]},
+	 {"bot_id":"B1","text":"","ts":"1700000100.000100","blocks":[{"type":"section","text":{"type":"mrkdwn","text":"build *green*"}},
+	   {"type":"context","elements":[{"type":"mrkdwn","text":"by ci"}]}]}]`)
+
+	out, err := renderTranscript(msg, nil, "C123456", "https://acme.slack.com", "")
+	require.NoError(t, err)
+	assert.Contains(t, out, "ts=1700000000.000100 @U1 (edited): look https://loom.com/x\n")
+	assert.Contains(t, out, "  ▸ Loom: Meeting\n")
+	assert.Contains(t, out, "  ▸ Deploy failed (https://ci/1) — step <b> & more\n")
+	assert.Contains(t, out, "  reactions: :+1:×3 :eyes:×1\n")
+	assert.Contains(t, out, "@bot:B1: build *green*\nby ci\n")
+	assert.Contains(t, out, "https://acme.slack.com/archives/C123456/p1700000000000100")
+
+	noLinks, maxChars = true, 4
+	out, err = renderTranscript(msg, nil, "C123456", "https://acme.slack.com", "")
+	require.NoError(t, err)
+	assert.NotContains(t, out, "https://acme.slack.com")
+	assert.Contains(t, out, ": look…(+19 chars)\n")
+}

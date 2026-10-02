@@ -42,6 +42,8 @@ var (
 	outputFormat string
 	assumeYes    bool
 	fieldsFlag   []string
+	noLinks      bool
+	maxChars     int
 
 	cfg *config.Config
 	cli *client.Client
@@ -94,6 +96,9 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&outputFormat, "format", "", "output format: table (default), json, csv, tsv")
 	rootCmd.PersistentFlags().BoolVar(&assumeYes, "yes", false, "confirm destructive operations")
 	rootCmd.PersistentFlags().StringSliceVar(&fieldsFlag, "fields", nil, "comma-separated output fields, including JSON (supports dotted object paths)")
+
+	rootCmd.PersistentFlags().BoolVar(&noLinks, "no-links", false, "transcripts: omit per-message permalink lines (ts= still shown)")
+	rootCmd.PersistentFlags().IntVar(&maxChars, "max-chars", 0, "transcripts: cap each message text at N characters (0 = no cap)")
 
 	rootCmd.Version = buildVersion()
 	rootCmd.AddCommand(versionCmd)

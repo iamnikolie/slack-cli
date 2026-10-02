@@ -102,41 +102,110 @@ func permalinkDigitsToTS(digits string) string {
 	return digits[:len(digits)-6] + "." + digits[len(digits)-6:]
 }
 
-// reMention matches Slack user mentions like <@U12345>.
-var reMention = regexp.MustCompile(`<@([UW][A-Z0-9]+)>`)
-
-// expandMentions rewrites <@Uxxx> to @name using the user cache; unknown IDs
-// fall back to the bare ID so an agent never sees raw <@...> markup.
-func expandMentions(text string, d *cache.Directory) string {
-	if d == nil {
-		return text
-	}
-	byID := map[string]string{}
-	for _, u := range d.Users {
-		byID[u.ID] = u.Name
-	}
-	return reMention.ReplaceAllStringFunc(text, func(m string) string {
-		id := reMention.FindStringSubmatch(m)[1]
-		if name, ok := byID[id]; ok {
-			return "@" + name
-		}
-		return "@" + id
-	})
-}
-
 type transcriptMsg struct {
-	User       string      `json:"user"`
-	Text       string      `json:"text"`
-	TS         string      `json:"ts"`
-	ThreadTS   string      `json:"thread_ts"`
-	ReplyCount int         `json:"reply_count"`
-	Subtype    string      `json:"subtype"`
-	Username   string      `json:"username"`
-	BotID      string      `json:"bot_id"`
-	Permalink  string      `json:"permalink"`
-	Files      []slackFile `json:"files"`
+	User        string            `json:"user"`
+	Text        string            `json:"text"`
+	TS          string            `json:"ts"`
+	ThreadTS    string            `json:"thread_ts"`
+	ReplyCount  int               `json:"reply_count"`
+	Subtype     string            `json:"subtype"`
+	Username    string            `json:"username"`
+	BotID       string            `json:"bot_id"`
+	Permalink   string            `json:"permalink"`
+	Files       []slackFile       `json:"files"`
+	Edited      *struct{}         `json:"edited"`
+	Reactions   []slackReaction   `json:"reactions"`
+	Attachments []slackAttachment `json:"attachments"`
+	Blocks      []slackBlock      `json:"blocks"`
 	// Replies is filled by `history --replies`; nil means not expanded.
 	Replies []transcriptMsg `json:"replies"`
+	// Focus marks the message `slk get` was asked about.
+	Focus bool `json:"slk_focus"`
+}
+
+type slackReaction struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
+}
+
+// slackAttachment covers link unfurls (from_url set) and legacy bot
+// attachments, whose content often lives here while text stays empty.
+type slackAttachment struct {
+	ServiceName string `json:"service_name"`
+	FromURL     string `json:"from_url"`
+	Pretext     string `json:"pretext"`
+	Title       string `json:"title"`
+	TitleLink   string `json:"title_link"`
+	Text        string `json:"text"`
+	Fallback    string `json:"fallback"`
+}
+
+type slackBlock struct {
+	Type string `json:"type"`
+	Text *struct {
+		Text string `json:"text"`
+	} `json:"text"`
+	Fields []struct {
+		Text string `json:"text"`
+	} `json:"fields"`
+	Elements []json.RawMessage `json:"elements"`
+}
+
+// blocksText recovers readable text from Block Kit for messages that carry an
+// empty text fallback (apps and workflows). Rich text from the composer is
+// already mirrored in text, so it is only consulted as a last resort.
+func blocksText(blocks []slackBlock) string {
+	var parts []string
+	for _, bl := range blocks {
+		if bl.Text != nil && bl.Text.Text != "" {
+			parts = append(parts, bl.Text.Text)
+		}
+		for _, f := range bl.Fields {
+			if f.Text != "" {
+				parts = append(parts, f.Text)
+			}
+		}
+		if bl.Type == "context" || bl.Type == "rich_text" {
+			var sb strings.Builder
+			collectRichText(bl.Elements, &sb)
+			if t := strings.TrimSpace(sb.String()); t != "" {
+				parts = append(parts, t)
+			}
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func collectRichText(elems []json.RawMessage, sb *strings.Builder) {
+	for _, raw := range elems {
+		var e struct {
+			Type     string            `json:"type"`
+			Text     json.RawMessage   `json:"text"`
+			URL      string            `json:"url"`
+			Name     string            `json:"name"`
+			Elements []json.RawMessage `json:"elements"`
+		}
+		if json.Unmarshal(raw, &e) != nil {
+			continue
+		}
+		var text string
+		if json.Unmarshal(e.Text, &text) != nil {
+			var obj struct {
+				Text string `json:"text"`
+			}
+			_ = json.Unmarshal(e.Text, &obj)
+			text = obj.Text
+		}
+		switch {
+		case text != "":
+			sb.WriteString(text)
+		case e.URL != "":
+			sb.WriteString(e.URL)
+		case e.Type == "emoji" && e.Name != "":
+			sb.WriteString(":" + e.Name + ":")
+		}
+		collectRichText(e.Elements, sb)
+	}
 }
 
 // transcriptAuthor picks a display label for a message author, falling back
@@ -205,13 +274,41 @@ func renderTranscript(data json.RawMessage, d *cache.Directory, channel, baseURL
 	return b.String(), nil
 }
 
-// writeTranscriptMsg prints one message line plus its files and link; prefix
-// indents thread replies expanded under their parent.
+// writeTranscriptMsg prints one message: a header line carrying date, ts and
+// author, then files, attachments, reactions and the link. prefix indents
+// thread replies expanded under their parent.
 func writeTranscriptMsg(b *strings.Builder, m transcriptMsg, prefix string, byID map[string]string, d *cache.Directory, channel, baseURL, thread string) {
 	pad := strings.Repeat(" ", len([]rune(prefix)))
-	fmt.Fprintf(b, "%s[%s] @%s: %s\tts=%s\n", prefix, tsClock(m.TS), transcriptAuthor(m, byID), expandMentions(m.Text, d), m.TS)
+	if m.Focus {
+		prefix = "» " + prefix
+		pad = "  " + pad
+	}
+	text := m.Text
+	if strings.TrimSpace(text) == "" {
+		text = blocksText(m.Blocks)
+	}
+	author := "@" + transcriptAuthor(m, byID)
+	if m.Edited != nil {
+		author += " (edited)"
+	}
+	fmt.Fprintf(b, "%s[%s] ts=%s %s: %s\n", prefix, tsClock(m.TS), m.TS, author, truncateText(expandMentions(text, d), maxChars))
 	for _, file := range m.Files {
 		fmt.Fprintf(b, "%s  file %s: %s (%s, %d bytes)\n", pad, file.ID, file.Name, file.MIME, file.Size)
+	}
+	for _, a := range m.Attachments {
+		if line := attachmentLine(a, d); line != "" {
+			fmt.Fprintf(b, "%s  ▸ %s\n", pad, line)
+		}
+	}
+	if len(m.Reactions) > 0 {
+		rs := make([]string, len(m.Reactions))
+		for i, r := range m.Reactions {
+			rs[i] = fmt.Sprintf(":%s:×%d", r.Name, r.Count)
+		}
+		fmt.Fprintf(b, "%s  reactions: %s\n", pad, strings.Join(rs, " "))
+	}
+	if noLinks {
+		return
 	}
 	link := m.Permalink
 	if link == "" {
@@ -224,6 +321,42 @@ func writeTranscriptMsg(b *strings.Builder, m transcriptMsg, prefix string, byID
 	if link != "" {
 		fmt.Fprintf(b, "%s  %s\n", pad, link)
 	}
+}
+
+// unfurlPreview caps link-preview text: the link itself is already in the
+// message, so the preview only needs to say what it points at.
+const unfurlPreview = 200
+
+// attachmentLine renders an attachment on one line. Unfurls show source and
+// title; bot attachments show their full content (subject to --max-chars).
+func attachmentLine(a slackAttachment, d *cache.Directory) string {
+	oneLine := func(s string) string { return strings.Join(strings.Fields(expandMentions(s, d)), " ") }
+	if a.FromURL != "" {
+		head := a.ServiceName
+		if a.Title != "" {
+			if head != "" {
+				head += ": "
+			}
+			head += a.Title
+		}
+		if head == "" {
+			head = a.FromURL
+		}
+		return truncateText(oneLine(head), unfurlPreview)
+	}
+	var parts []string
+	for _, s := range []string{a.Pretext, a.Title, a.Text} {
+		if s = oneLine(s); s != "" {
+			parts = append(parts, s)
+		}
+	}
+	if len(parts) == 0 && a.Fallback != "" {
+		parts = append(parts, oneLine(a.Fallback))
+	}
+	if a.TitleLink != "" && len(parts) > 0 {
+		parts[0] += " (" + a.TitleLink + ")"
+	}
+	return truncateText(strings.Join(parts, " — "), maxChars)
 }
 
 // tsClock includes the date and UTC offset so old messages cannot look current.
@@ -276,12 +409,14 @@ func emitTranscript(ctx context.Context, raw json.RawMessage, channel, thread st
 	// auth.test supplies the workspace URL without requiring additional scopes.
 	// One lookup per transcript avoids a permalink API call for every message.
 	baseURL := ""
-	identity, err := cli.Call(ctx, "auth.test", nil)
-	if err == nil {
-		baseURL, err = fieldString(identity, "url")
-	}
-	if err != nil {
-		fmt.Fprintf(stderr, "message links unavailable: %v\n", err)
+	if !noLinks {
+		identity, err := cli.Call(ctx, "auth.test", nil)
+		if err == nil {
+			baseURL, err = fieldString(identity, "url")
+		}
+		if err != nil {
+			fmt.Fprintf(stderr, "message links unavailable: %v\n", err)
+		}
 	}
 	out, err := renderTranscript(raw, d, channel, baseURL, thread)
 	if err != nil {
