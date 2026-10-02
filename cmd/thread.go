@@ -9,7 +9,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var threadLimit int
+var (
+	threadLimit int
+	threadSince string
+	threadUntil string
+)
 
 var threadCmd = &cobra.Command{
 	Use:   "thread <#channel|id> <ts|permalink>",
@@ -20,13 +24,18 @@ var threadCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		return readThread(cmd.Context(), channel, ts, threadLimit)
+		bounds, err := timeBounds("", "", threadSince, threadUntil)
+		if err != nil {
+			return err
+		}
+		return readThread(cmd.Context(), channel, ts, threadLimit, bounds)
 	},
 }
 
 // readThread prints a thread (parent first, then replies) as a transcript.
-func readThread(ctx context.Context, channel, ts string, limit int) error {
-	raw, hit, err := fetchReplies(ctx, channel, ts, limit)
+// bounds may carry oldest/latest to window a long thread.
+func readThread(ctx context.Context, channel, ts string, limit int, bounds url.Values) error {
+	raw, hit, err := fetchReplies(ctx, channel, ts, limit, bounds)
 	if err != nil {
 		return err
 	}
@@ -35,8 +44,11 @@ func readThread(ctx context.Context, channel, ts string, limit int) error {
 }
 
 // fetchReplies returns up to limit messages of a thread; the parent comes first.
-func fetchReplies(ctx context.Context, channel, ts string, limit int) (json.RawMessage, bool, error) {
+func fetchReplies(ctx context.Context, channel, ts string, limit int, bounds url.Values) (json.RawMessage, bool, error) {
 	q := url.Values{}
+	for k, v := range bounds {
+		q[k] = v
+	}
 	q.Set("channel", channel)
 	q.Set("ts", ts)
 	return cli.Paginate(ctx, "conversations.replies", q, "messages", limit)
@@ -65,5 +77,7 @@ func resolveThreadTarget(ctx context.Context, args []string) (channel, ts string
 
 func init() {
 	threadCmd.Flags().IntVar(&threadLimit, "limit", 200, "max replies")
+	threadCmd.Flags().StringVar(&threadSince, "since", "", "only replies on/after this time (2h, 3d, today, YYYY-MM-DD, …)")
+	threadCmd.Flags().StringVar(&threadUntil, "until", "", "only replies before this time")
 	rootCmd.AddCommand(threadCmd)
 }

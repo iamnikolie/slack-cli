@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"strconv"
-	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -20,28 +18,17 @@ var (
 	historyThread       string
 	historyReplies      bool
 	historyRepliesLimit int
+	historyDesc         bool
 )
-
-// parseTimeBound accepts a Slack ts (10.6), epoch seconds, or YYYY-MM-DD (UTC)
-// and returns the value Slack's oldest/latest expects (epoch seconds string,
-// or the ts unchanged).
-func parseTimeBound(s string) (string, error) {
-	if reTS.MatchString(s) {
-		return s, nil
-	}
-	if _, err := strconv.ParseInt(s, 10, 64); err == nil {
-		return s, nil
-	}
-	if t, err := time.Parse("2006-01-02", s); err == nil {
-		return strconv.FormatInt(t.UTC().Unix(), 10), nil
-	}
-	return "", fmt.Errorf("cannot parse time %q: use a ts, epoch seconds, or YYYY-MM-DD", s)
-}
 
 var historyCmd = &cobra.Command{
 	Use:   "history <#channel|id|permalink>",
 	Short: "Read channel message history (transcript), optionally with thread replies",
 	Long: `Read channel message history (transcript).
+
+--limit takes the latest N messages in the window; they print oldest first
+(--desc for newest first). --since/--until take 2h/3d/1w, today, yesterday,
+YYYY-MM-DD[ HH:MM] (local), RFC3339, epoch, or a ts.
 
   --thread <ts|permalink>  read one thread instead of the channel (same as 'slk thread')
   --replies                expand every thread inline under its parent message
@@ -53,6 +40,10 @@ A thread permalink as the only argument implies --thread.`,
 		ref := args[0]
 		if ch, _, ok := parseThreadRef(ref); ok && ch != "" && historyThread == "" {
 			historyThread, ref = ref, ch
+		}
+		bounds, err := timeBounds(historyOldest, historyLatest, historySince, historyUntil)
+		if err != nil {
+			return err
 		}
 		if historyThread != "" {
 			if historyReplies {
@@ -66,40 +57,23 @@ A thread permalink as the only argument implies --thread.`,
 			if !cmd.Flags().Changed("limit") {
 				limit = threadLimit
 			}
-			return readThread(ctx, channel, ts, limit)
+			return readThread(ctx, channel, ts, limit, bounds)
 		}
 
 		id, err := channelRef(ctx, ref)
 		if err != nil {
 			return err
 		}
-		q := url.Values{}
+		q := bounds
 		q.Set("channel", id)
-		if historyOldest != "" {
-			q.Set("oldest", historyOldest)
-		}
-		if historyLatest != "" {
-			q.Set("latest", historyLatest)
-		}
-		if historySince != "" {
-			v, err := parseTimeBound(historySince)
-			if err != nil {
-				return err
-			}
-			q.Set("oldest", v)
-		}
-		if historyUntil != "" {
-			v, err := parseTimeBound(historyUntil)
-			if err != nil {
-				return err
-			}
-			q.Set("latest", v)
-		}
 		raw, hit, err := cli.Paginate(ctx, "conversations.history", q, "messages", historyLimit)
 		if err != nil {
 			return err
 		}
 		paginationHint(stderr, hit, historyLimit)
+		if !historyDesc {
+			raw = reverseArray(raw)
+		}
 
 		if historyReplies {
 			if raw, err = expandReplies(ctx, raw, id, historyRepliesLimit); err != nil {
@@ -108,6 +82,45 @@ A thread permalink as the only argument implies --thread.`,
 		}
 		return emitTranscript(ctx, raw, id, "")
 	},
+}
+
+// timeBounds builds Slack's oldest/latest from the raw ts flags and the
+// friendlier --since/--until (which win when both are given).
+func timeBounds(oldest, latest, since, until string) (url.Values, error) {
+	q := url.Values{}
+	if oldest != "" {
+		q.Set("oldest", oldest)
+	}
+	if latest != "" {
+		q.Set("latest", latest)
+	}
+	for key, v := range map[string]string{"oldest": since, "latest": until} {
+		if v == "" {
+			continue
+		}
+		bound, err := parseTimeBound(v)
+		if err != nil {
+			return nil, err
+		}
+		q.Set(key, bound)
+	}
+	return q, nil
+}
+
+// reverseArray flips a JSON array; Slack returns history newest first.
+func reverseArray(raw json.RawMessage) json.RawMessage {
+	var items []json.RawMessage
+	if json.Unmarshal(raw, &items) != nil {
+		return raw
+	}
+	for i, j := 0, len(items)-1; i < j; i, j = i+1, j-1 {
+		items[i], items[j] = items[j], items[i]
+	}
+	b, err := json.Marshal(items)
+	if err != nil {
+		return raw
+	}
+	return b
 }
 
 // expandReplies attaches each thread parent's replies (oldest first, parent
@@ -128,7 +141,7 @@ func expandReplies(ctx context.Context, raw json.RawMessage, channel string, per
 			continue // a broadcast reply, not a thread parent
 		}
 		// +1: conversations.replies returns the parent first.
-		thread, _, err := fetchReplies(ctx, channel, ts, perThread+1)
+		thread, _, err := fetchReplies(ctx, channel, ts, perThread+1, nil)
 		if err != nil {
 			fmt.Fprintf(stderr, "thread %s: replies unavailable: %v\n", ts, err)
 			continue
@@ -185,10 +198,11 @@ func init() {
 	historyCmd.Flags().IntVar(&historyLimit, "limit", 50, "max messages (with --thread: max thread messages, default 200)")
 	historyCmd.Flags().StringVar(&historyOldest, "oldest", "", "only messages after this ts (epoch or ts)")
 	historyCmd.Flags().StringVar(&historyLatest, "latest", "", "only messages before this ts (epoch or ts)")
-	historyCmd.Flags().StringVar(&historySince, "since", "", "only messages on/after this date (YYYY-MM-DD, epoch, or ts)")
-	historyCmd.Flags().StringVar(&historyUntil, "until", "", "only messages before this date (YYYY-MM-DD, epoch, or ts)")
+	historyCmd.Flags().StringVar(&historySince, "since", "", "only messages on/after this time (2h, 3d, 1w, today, yesterday, YYYY-MM-DD[ HH:MM], epoch, ts)")
+	historyCmd.Flags().StringVar(&historyUntil, "until", "", "only messages before this time (same forms as --since)")
 	historyCmd.Flags().StringVar(&historyThread, "thread", "", "read this thread instead of the channel (parent ts or permalink)")
 	historyCmd.Flags().BoolVar(&historyReplies, "replies", false, "expand thread replies inline under each parent (one API call per thread)")
 	historyCmd.Flags().IntVar(&historyRepliesLimit, "replies-limit", 50, "max replies shown per thread with --replies")
+	historyCmd.Flags().BoolVar(&historyDesc, "desc", false, "newest message first (default: oldest first)")
 	rootCmd.AddCommand(historyCmd)
 }

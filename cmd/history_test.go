@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/iamnikolie/slack-cli/internal/client"
 
@@ -15,6 +16,9 @@ import (
 )
 
 func TestParseTimeBound(t *testing.T) {
+	oldLocal := time.Local
+	t.Cleanup(func() { time.Local = oldLocal })
+	time.Local = time.UTC
 	// already a ts → passthrough
 	ts, err := parseTimeBound("1700000000.000100")
 	require.NoError(t, err)
@@ -25,7 +29,7 @@ func TestParseTimeBound(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "1700000000", ts)
 
-	// YYYY-MM-DD → epoch seconds string
+	// YYYY-MM-DD → local midnight as epoch seconds
 	ts, err = parseTimeBound("2023-11-14")
 	require.NoError(t, err)
 	assert.Equal(t, "1699920000", ts) // 2023-11-14T00:00:00Z
@@ -94,4 +98,41 @@ func TestExpandRepliesKeepsGoingWhenAThreadFails(t *testing.T) {
 	transcript, err := renderTranscript(out, nil, "", "", "")
 	require.NoError(t, err)
 	assert.Contains(t, transcript, "↳ 2 replies") // unexpanded thread still advertised
+}
+
+func TestParsePastAndFuture(t *testing.T) {
+	loc := time.FixedZone("test", 2*3600)
+	now := time.Date(2026, 10, 2, 15, 30, 0, 0, loc)
+	for in, want := range map[string]time.Time{
+		"2h":               now.Add(-2 * time.Hour),
+		"3d":               now.AddDate(0, 0, -3),
+		"1w":               now.AddDate(0, 0, -7),
+		"today":            time.Date(2026, 10, 2, 0, 0, 0, 0, loc),
+		"yesterday":        time.Date(2026, 10, 1, 0, 0, 0, 0, loc),
+		"2026-09-30 08:15": time.Date(2026, 9, 30, 8, 15, 0, 0, loc),
+	} {
+		got, err := parsePast(in, now)
+		require.NoError(t, err, in)
+		assert.True(t, want.Equal(got), "%s: %v != %v", in, got, want)
+	}
+	_, err := parsePast("+2h", now)
+	assert.Error(t, err) // a future offset is not a past bound
+
+	for in, want := range map[string]time.Time{
+		"+2h":              now.Add(2 * time.Hour),
+		"in 30m":           now.Add(30 * time.Minute),
+		"16:00":            time.Date(2026, 10, 2, 16, 0, 0, 0, loc),
+		"09:00":            time.Date(2026, 10, 3, 9, 0, 0, 0, loc), // passed today → tomorrow
+		"tomorrow 10:30":   time.Date(2026, 10, 3, 10, 30, 0, 0, loc),
+		"tomorrow":         time.Date(2026, 10, 3, 9, 0, 0, 0, loc),
+		"2026-10-05 12:00": time.Date(2026, 10, 5, 12, 0, 0, 0, loc),
+	} {
+		got, err := parseFuture(in, now)
+		require.NoError(t, err, in)
+		assert.True(t, want.Equal(got), "%s: %v != %v", in, got, want)
+	}
+}
+
+func TestReverseArray(t *testing.T) {
+	assert.JSONEq(t, `[{"ts":"2"},{"ts":"1"}]`, string(reverseArray([]byte(`[{"ts":"1"},{"ts":"2"}]`))))
 }

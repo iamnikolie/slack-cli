@@ -93,8 +93,14 @@ func sortedKeys(items []map[string]any) []string {
 	return keys
 }
 
-// List renders a JSON array as a Markdown table.
+// List renders a JSON array as a Markdown table with sorted columns.
 func List(w io.Writer, data json.RawMessage) error {
+	return ListCols(w, data, nil)
+}
+
+// ListCols is List with explicit columns, in order; a column stays even when no
+// row has it. nil cols means the sorted union of keys.
+func ListCols(w io.Writer, data json.RawMessage, cols []string) error {
 	items, err := decodeArray(data)
 	if err != nil {
 		return fmt.Errorf("render.List: %w", err)
@@ -104,7 +110,7 @@ func List(w io.Writer, data json.RawMessage) error {
 		return nil
 	}
 
-	keys := sortedKeys(items)
+	keys := columns(items, cols)
 
 	sep := make([]string, len(keys))
 	for i := range sep {
@@ -142,15 +148,31 @@ func KV(w io.Writer, data json.RawMessage) error {
 
 // CSV renders a JSON array as comma-separated values with a header row.
 func CSV(w io.Writer, data json.RawMessage) error {
-	return separatedValues(w, data, ",")
+	return separatedValues(w, data, ",", nil)
 }
 
 // TSV renders a JSON array as tab-separated values with a header row.
 func TSV(w io.Writer, data json.RawMessage) error {
-	return separatedValues(w, data, "\t")
+	return separatedValues(w, data, "\t", nil)
 }
 
-func separatedValues(w io.Writer, data json.RawMessage, sep string) error {
+// CSVCols and TSVCols take explicit columns like ListCols.
+func CSVCols(w io.Writer, data json.RawMessage, cols []string) error {
+	return separatedValues(w, data, ",", cols)
+}
+
+func TSVCols(w io.Writer, data json.RawMessage, cols []string) error {
+	return separatedValues(w, data, "\t", cols)
+}
+
+func columns(items []map[string]any, cols []string) []string {
+	if len(cols) > 0 {
+		return cols
+	}
+	return sortedKeys(items)
+}
+
+func separatedValues(w io.Writer, data json.RawMessage, sep string, cols []string) error {
 	items, err := decodeArray(data)
 	if err != nil {
 		return fmt.Errorf("render: %w", err)
@@ -158,7 +180,7 @@ func separatedValues(w io.Writer, data json.RawMessage, sep string) error {
 	if len(items) == 0 {
 		return nil
 	}
-	keys := sortedKeys(items)
+	keys := columns(items, cols)
 	fmt.Fprintln(w, strings.Join(keys, sep))
 	for _, item := range items {
 		cells := make([]string, len(keys))

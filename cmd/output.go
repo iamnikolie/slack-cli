@@ -148,15 +148,18 @@ func writeJSON(w io.Writer, data json.RawMessage) error {
 	return enc.Encode(value)
 }
 
+// renderTable keeps the requested columns in order, even ones no row has, so
+// --fields always yields the same header.
 func renderTable(data json.RawMessage, defaults []string) error {
-	projected := projectList(data, activeFields(defaults))
+	cols := activeFields(defaults)
+	projected := projectList(data, cols)
 	switch outputFormat {
 	case "csv":
-		return render.CSV(os.Stdout, projected)
+		return render.CSVCols(os.Stdout, projected, cols)
 	case "tsv":
-		return render.TSV(os.Stdout, projected)
+		return render.TSVCols(os.Stdout, projected, cols)
 	default:
-		return render.List(os.Stdout, projected)
+		return render.ListCols(os.Stdout, projected, cols)
 	}
 }
 
@@ -172,11 +175,12 @@ func emitObj(data json.RawMessage, defaults []string) error {
 		return writeRaw(projectOne(data, fieldsFlag))
 	}
 	projected := projectOne(data, activeFields(defaults))
+	cols := activeFields(defaults)
 	switch outputFormat {
 	case "csv":
-		return render.CSV(os.Stdout, wrapArray(projected))
+		return render.CSVCols(os.Stdout, wrapArray(projected), cols)
 	case "tsv":
-		return render.TSV(os.Stdout, wrapArray(projected))
+		return render.TSVCols(os.Stdout, wrapArray(projected), cols)
 	default:
 		return render.KV(os.Stdout, projected)
 	}

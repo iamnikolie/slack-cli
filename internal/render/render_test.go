@@ -27,3 +27,12 @@ func TestKVRendersObject(t *testing.T) {
 	require.NoError(t, KV(&buf, []byte(`{"team":"T1"}`)))
 	assert.Contains(t, buf.String(), "**team:** T1")
 }
+
+func TestColsKeepOrderAndMissingColumns(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, CSVCols(&buf, []byte(`[{"ts":"1","text":"a"}]`), []string{"ts", "thread_ts", "text"}))
+	assert.Equal(t, "ts,thread_ts,text\n1,,a\n", buf.String())
+	buf.Reset()
+	require.NoError(t, ListCols(&buf, []byte(`[{"b":1,"a":2}]`), []string{"b", "a"}))
+	assert.Contains(t, buf.String(), "| b | a |")
+}
