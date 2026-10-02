@@ -76,3 +76,50 @@ func Save(d *Directory, profile string) error {
 	}
 	return os.WriteFile(p, data, 0600)
 }
+
+// Cursors maps channel ID → last ts `slk tail` has shown.
+type Cursors map[string]string
+
+func cursorsPath(profile string) (string, error) {
+	dir, err := config.Dir(profile)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "cursors.json"), nil
+}
+
+// LoadCursors reads tail cursors; a missing file is an empty set.
+func LoadCursors(profile string) (Cursors, error) {
+	p, err := cursorsPath(profile)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(p)
+	if os.IsNotExist(err) {
+		return Cursors{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	c := Cursors{}
+	if err := json.Unmarshal(data, &c); err != nil {
+		return nil, fmt.Errorf("cache.LoadCursors: %w", err)
+	}
+	return c, nil
+}
+
+// SaveCursors writes tail cursors (mode 0600).
+func SaveCursors(c Cursors, profile string) error {
+	p, err := cursorsPath(profile)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
+		return fmt.Errorf("cache.SaveCursors: mkdir: %w", err)
+	}
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(p, data, 0600)
+}

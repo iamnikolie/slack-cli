@@ -406,17 +406,9 @@ func emitTranscript(ctx context.Context, raw json.RawMessage, channel, thread st
 	if err != nil {
 		return err
 	}
-	// auth.test supplies the workspace URL without requiring additional scopes.
-	// One lookup per transcript avoids a permalink API call for every message.
 	baseURL := ""
 	if !noLinks {
-		identity, err := cli.Call(ctx, "auth.test", nil)
-		if err == nil {
-			baseURL, err = fieldString(identity, "url")
-		}
-		if err != nil {
-			fmt.Fprintf(stderr, "message links unavailable: %v\n", err)
-		}
+		baseURL = workspaceURL(ctx)
 	}
 	out, err := renderTranscript(raw, d, channel, baseURL, thread)
 	if err != nil {
@@ -424,6 +416,36 @@ func emitTranscript(ctx context.Context, raw json.RawMessage, channel, thread st
 	}
 	_, err = os.Stdout.WriteString(out)
 	return err
+}
+
+// identityCache memoizes auth.test for one process: transcripts need the
+// workspace URL for links and unread/mentions need the caller's user ID.
+var identityCache json.RawMessage
+
+func identity(ctx context.Context) (json.RawMessage, error) {
+	if identityCache != nil {
+		return identityCache, nil
+	}
+	raw, err := cli.Call(ctx, "auth.test", nil)
+	if err != nil {
+		return nil, err
+	}
+	identityCache = raw
+	return raw, nil
+}
+
+// workspaceURL returns the workspace base URL, or "" with a warning; auth.test
+// needs no extra scopes, and one lookup avoids a permalink call per message.
+func workspaceURL(ctx context.Context) string {
+	raw, err := identity(ctx)
+	baseURL := ""
+	if err == nil {
+		baseURL, err = fieldString(raw, "url")
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "message links unavailable: %v\n", err)
+	}
+	return baseURL
 }
 
 // channelRef resolves ref to a channel ID, refetching the directory once on a

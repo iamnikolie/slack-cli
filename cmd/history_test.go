@@ -60,7 +60,7 @@ func TestExpandRepliesAttachesThreadsUnderParents(t *testing.T) {
 	  {"ts":"1700000000.000100","text":"parent","reply_count":5},
 	  {"ts":"1700000300.000400","thread_ts":"1700000000.000100","reply_count":5,"subtype":"thread_broadcast","text":"broadcast"},
 	  {"ts":"1700000500.000500","text":"plain"}]`)
-	out, err := expandReplies(context.Background(), raw, "C0123456", 2)
+	out, err := expandReplies(context.Background(), raw, "C0123456", 2, "")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"1700000000.000100"}, calls) // one call, broadcast/plain skipped
 
@@ -92,7 +92,7 @@ func TestExpandRepliesKeepsGoingWhenAThreadFails(t *testing.T) {
 	defer srv.Close()
 	cli = client.New("test", srv.URL)
 
-	out, err := expandReplies(context.Background(), []byte(`[{"ts":"1700000000.000100","reply_count":2}]`), "C0123456", 50)
+	out, err := expandReplies(context.Background(), []byte(`[{"ts":"1700000000.000100","reply_count":2}]`), "C0123456", 50, "")
 	require.NoError(t, err)
 	assert.Contains(t, errOut.String(), "thread 1700000000.000100: replies unavailable")
 	transcript, err := renderTranscript(out, nil, "", "", "")

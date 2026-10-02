@@ -36,34 +36,54 @@ var searchCmd = &cobra.Command{
 		meta := result.SearchMeta
 		fmt.Fprintf(stderr, "Search: total=%d returned=%d has_more=%t has_next_page=%t pages_fetched=%d page_count=%d omitted_from_last_page=%d\n", meta.Total, meta.Returned, meta.HasMore, meta.HasNextPage, meta.PagesFetched, meta.PageCount, meta.OmittedFromLastPage)
 		searchPaginationHint(meta, searchLimit)
-		b, err := json.Marshal(result.Matches)
-		if err != nil {
-			return err
-		}
-		if jsonOutput || outputFormat == "json" {
-			if searchWithMeta {
-				return emitSearchEnvelope(result)
-			}
-			return emitList(b, nil)
-		}
-		items, err := decodeArray(b)
-		if err != nil {
-			return err
-		}
-		for _, item := range items {
-			if ts, ok := item["ts"].(string); ok {
-				item["date"] = tsClock(ts)
-			}
-			if item["username"] == nil || item["username"] == "" {
-				item["username"] = item["user"]
-			}
-		}
-		b, err = json.Marshal(items)
-		if err != nil {
-			return err
-		}
-		return emitList(b, []string{"date", "channel.name", "username", "text", "permalink"})
+		return emitSearchMatches(cmd.Context(), result)
 	},
+}
+
+// emitSearchMatches prints matches as a table (decoded text, DM partners by
+// name) or, with --json, as raw matches or the --with-meta envelope.
+func emitSearchMatches(ctx context.Context, result searchResult) error {
+	b, err := json.Marshal(result.Matches)
+	if err != nil {
+		return err
+	}
+	if jsonOutput || outputFormat == "json" {
+		if searchWithMeta {
+			return emitSearchEnvelope(result)
+		}
+		return emitList(b, nil)
+	}
+	d, err := loadDirectory(ctx)
+	if err != nil {
+		return err
+	}
+	items, err := decodeArray(b)
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		if ts, ok := item["ts"].(string); ok {
+			item["date"] = tsClock(ts)
+		}
+		if item["username"] == nil || item["username"] == "" {
+			item["username"] = item["user"]
+		}
+		if text, ok := item["text"].(string); ok {
+			item["text"] = truncateText(expandMentions(text, d), maxChars)
+		}
+		if ch, ok := item["channel"].(map[string]any); ok {
+			if id, _ := ch["id"].(string); id != "" {
+				if label := channelLabel(d, id); label != id {
+					ch["name"] = strings.TrimPrefix(label, "#")
+				}
+			}
+		}
+	}
+	b, err = json.Marshal(items)
+	if err != nil {
+		return err
+	}
+	return emitList(b, []string{"date", "channel.name", "username", "text", "permalink"})
 }
 
 // buildSearchQuery appends in:/from: operators to the user's query. Channel and

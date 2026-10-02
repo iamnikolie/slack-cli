@@ -76,7 +76,7 @@ A thread permalink as the only argument implies --thread.`,
 		}
 
 		if historyReplies {
-			if raw, err = expandReplies(ctx, raw, id, historyRepliesLimit); err != nil {
+			if raw, err = expandReplies(ctx, raw, id, historyRepliesLimit, ""); err != nil {
 				return err
 			}
 		}
@@ -124,9 +124,10 @@ func reverseArray(raw json.RawMessage) json.RawMessage {
 }
 
 // expandReplies attaches each thread parent's replies (oldest first, parent
-// excluded) under a "replies" key. A thread that fails to load keeps its reply
-// count and is reported on stderr instead of failing the whole history.
-func expandReplies(ctx context.Context, raw json.RawMessage, channel string, perThread int) (json.RawMessage, error) {
+// excluded) under a "replies" key; only, when set, limits it to that parent. A
+// thread that fails to load keeps its reply count and is reported on stderr
+// instead of failing the whole history.
+func expandReplies(ctx context.Context, raw json.RawMessage, channel string, perThread int, only string) (json.RawMessage, error) {
 	msgs, err := decodeArray(raw)
 	if err != nil {
 		return nil, fmt.Errorf("expandReplies: %w", err)
@@ -134,7 +135,7 @@ func expandReplies(ctx context.Context, raw json.RawMessage, channel string, per
 	for _, m := range msgs {
 		ts, _ := m["ts"].(string)
 		count, _ := m["reply_count"].(json.Number)
-		if n, _ := count.Int64(); n <= 0 || ts == "" {
+		if n, _ := count.Int64(); n <= 0 || ts == "" || (only != "" && ts != only) {
 			continue
 		}
 		if parent, _ := m["thread_ts"].(string); parent != "" && parent != ts {
