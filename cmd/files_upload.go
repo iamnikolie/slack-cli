@@ -157,7 +157,7 @@ var filesUploadCmd = &cobra.Command{
 			o.Channel = id
 		}
 		if uploadThread != "" {
-			_, ts, ok := parseMessageRef(uploadThread)
+			_, ts, ok := parseThreadRef(uploadThread)
 			if !ok {
 				return errInvalidTS(uploadThread)
 			}

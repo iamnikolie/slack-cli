@@ -18,7 +18,7 @@ var replyCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		_, ts, ok := parseMessageRef(args[1])
+		_, ts, ok := parseThreadRef(args[1])
 		if !ok {
 			return errInvalidTS(args[1])
 		}

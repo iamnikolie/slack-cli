@@ -58,7 +58,15 @@ var sendCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		raw, err := postMessage(cmd, id, body, sendThread)
+		thread := ""
+		if sendThread != "" {
+			_, ts, ok := parseThreadRef(sendThread)
+			if !ok {
+				return errInvalidTS(sendThread)
+			}
+			thread = ts
+		}
+		raw, err := postMessage(cmd, id, body, thread)
 		if err != nil {
 			return err
 		}
@@ -81,7 +89,7 @@ func postMessage(cmd *cobra.Command, channel, body, threadTS string) ([]byte, er
 }
 
 func init() {
-	sendCmd.Flags().StringVar(&sendThread, "thread", "", "reply in this thread (parent ts)")
+	sendCmd.Flags().StringVar(&sendThread, "thread", "", "reply in this thread (parent ts or permalink)")
 	sendCmd.Flags().StringVar(&sendBodyFile, "body-file", "", "read text from a file ('-' for stdin)")
 	sendCmd.Flags().BoolVar(&sendIDOnly, "id-only", false, "print only the new message ts")
 	rootCmd.AddCommand(sendCmd)

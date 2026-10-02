@@ -32,8 +32,14 @@ miss it refetches once. `slk sync` refreshes it manually.
   Limit counts messages, not channels; this is a search sample, not a census.
   Default searches all dates; requires `search:read`. JSON includes sample metadata.
 - `slk channel view <#chan|id>`
-- `slk history <#chan|id> [--limit N] [--since 2024-01-01] [--until ...] [--oldest ts] [--latest ts]`
+- `slk history <#chan|id|permalink> [--limit N] [--since 2024-01-01] [--until ...] [--oldest ts] [--latest ts]`
+  - `--replies [--replies-limit 50]` — expand every thread inline under its
+    parent (`    ↳ ` lines); one API call per thread. JSON nests `replies`.
+  - `--thread <ts|permalink>` — read one thread instead (= `slk thread`);
+    `slk history <thread-permalink>` implies it.
 - `slk thread <#chan|id> <ts|permalink>` — thread replies (comments).
+  Never call `conversations.replies` via `slk api` — use these.
+- A reply permalink (`?thread_ts=`) resolves to its parent for thread targets.
 - `slk files download <file-id|file-permalink> [-o path-or-directory]` — download
   a Slack-hosted attachment with the profile token; requires `files:read`.
   Default filename is `<file-id>-<name>` in the current directory. Existing
@@ -44,7 +50,7 @@ miss it refetches once. `slk sync` refreshes it manually.
   in one message (optionally in a thread, with a comment); without it they stay
   private. `--title`/`--name` only for a single file. Paths are validated before
   any upload. Output: `id`, `name`, `bytes` per file.
-- `slk send <#chan|id> <text> [--thread ts] [--body-file -] [--id-only]`
+- `slk send <#chan|id> <text> [--thread ts|permalink] [--body-file -] [--id-only]`
 - `slk reply <#chan|id> <ts> <text>` — sugar for a thread reply.
 - `slk update <#chan|id> <ts> <text>` — your own message only.
 - `slk delete <#chan|id> <ts> --yes` — your own message only.

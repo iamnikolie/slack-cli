@@ -24,6 +24,8 @@ var (
 	reUserID    = regexp.MustCompile(`^[UW][A-Z0-9]{6,}$`)
 	reTS        = regexp.MustCompile(`^\d{10}\.\d{6}$`)
 	rePermalink = regexp.MustCompile(`/archives/([CDG][A-Z0-9]+)/p(\d{16})`)
+	// A reply's permalink carries its parent as ?thread_ts=1700000000.000100.
+	rePermalinkThread = regexp.MustCompile(`[?&]thread_ts=(\d{10}\.\d{6})`)
 )
 
 func isChannelID(s string) bool { return reChannelID.MatchString(s) }
@@ -78,6 +80,19 @@ func parseMessageRef(ref string) (channel, ts string, ok bool) {
 	return "", "", false
 }
 
+// parseThreadRef is parseMessageRef for thread targets. Threads hang off the
+// parent message, so a reply's permalink resolves to its ?thread_ts= parent
+// rather than the reply's own ts.
+func parseThreadRef(ref string) (channel, ts string, ok bool) {
+	channel, ts, ok = parseMessageRef(ref)
+	if ok && channel != "" {
+		if m := rePermalinkThread.FindStringSubmatch(ref); m != nil {
+			ts = m[1]
+		}
+	}
+	return channel, ts, ok
+}
+
 // permalinkDigitsToTS turns the 16-digit "p1700000000123456" tail into the
 // "1700000000.123456" ts form (dot 6 digits from the end).
 func permalinkDigitsToTS(digits string) string {
@@ -120,6 +135,8 @@ type transcriptMsg struct {
 	BotID      string      `json:"bot_id"`
 	Permalink  string      `json:"permalink"`
 	Files      []slackFile `json:"files"`
+	// Replies is filled by `history --replies`; nil means not expanded.
+	Replies []transcriptMsg `json:"replies"`
 }
 
 // transcriptAuthor picks a display label for a message author, falling back
@@ -171,27 +188,42 @@ func renderTranscript(data json.RawMessage, d *cache.Directory, channel, baseURL
 		b.WriteString("No messages.\n")
 	}
 	for _, m := range msgs {
-		name := transcriptAuthor(m, byID)
-		fmt.Fprintf(&b, "[%s] @%s: %s\tts=%s\n", tsClock(m.TS), name, expandMentions(m.Text, d), m.TS)
-		for _, file := range m.Files {
-			fmt.Fprintf(&b, "  file %s: %s (%s, %d bytes)\n", file.ID, file.Name, file.MIME, file.Size)
-		}
-		if m.ReplyCount > 0 {
-			fmt.Fprintf(&b, "  ↳ %d replies (ts=%s)\n", m.ReplyCount, m.TS)
-		}
-		link := m.Permalink
-		if link == "" {
-			threadTS := m.ThreadTS
-			if threadTS == "" {
-				threadTS = thread
+		writeTranscriptMsg(&b, m, "", byID, d, channel, baseURL, thread)
+		if m.Replies == nil {
+			if m.ReplyCount > 0 {
+				fmt.Fprintf(&b, "  ↳ %d replies (ts=%s)\n", m.ReplyCount, m.TS)
 			}
-			link = messagePermalink(baseURL, channel, m.TS, threadTS)
+			continue
 		}
-		if link != "" {
-			fmt.Fprintf(&b, "  %s\n", link)
+		for _, r := range m.Replies {
+			writeTranscriptMsg(&b, r, "    ↳ ", byID, d, channel, baseURL, m.TS)
+		}
+		if more := m.ReplyCount - len(m.Replies); more > 0 {
+			fmt.Fprintf(&b, "    ↳ +%d more replies: slk thread %s %s\n", more, channel, m.TS)
 		}
 	}
 	return b.String(), nil
+}
+
+// writeTranscriptMsg prints one message line plus its files and link; prefix
+// indents thread replies expanded under their parent.
+func writeTranscriptMsg(b *strings.Builder, m transcriptMsg, prefix string, byID map[string]string, d *cache.Directory, channel, baseURL, thread string) {
+	pad := strings.Repeat(" ", len([]rune(prefix)))
+	fmt.Fprintf(b, "%s[%s] @%s: %s\tts=%s\n", prefix, tsClock(m.TS), transcriptAuthor(m, byID), expandMentions(m.Text, d), m.TS)
+	for _, file := range m.Files {
+		fmt.Fprintf(b, "%s  file %s: %s (%s, %d bytes)\n", pad, file.ID, file.Name, file.MIME, file.Size)
+	}
+	link := m.Permalink
+	if link == "" {
+		threadTS := m.ThreadTS
+		if threadTS == "" {
+			threadTS = thread
+		}
+		link = messagePermalink(baseURL, channel, m.TS, threadTS)
+	}
+	if link != "" {
+		fmt.Fprintf(b, "%s  %s\n", pad, link)
+	}
 }
 
 // tsClock includes the date and UTC offset so old messages cannot look current.
@@ -235,7 +267,7 @@ func emitTranscript(ctx context.Context, raw json.RawMessage, channel, thread st
 		return writeRaw(projectList(raw, fieldsFlag))
 	}
 	if outputFormat != "" || len(fieldsFlag) > 0 {
-		return renderTable(raw, []string{"ts", "user", "text", "thread_ts", "reply_count"})
+		return renderTable(flattenReplies(raw), []string{"ts", "user", "text", "thread_ts", "reply_count"})
 	}
 	d, err := loadDirectory(ctx)
 	if err != nil {

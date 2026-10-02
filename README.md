@@ -138,7 +138,16 @@ Run `slk skill` for the full agent-facing reference, or `slk <command> --help`.
 ### Reading
 - `slk history <#chan|id>` — `--limit`, `--since`/`--until` (YYYY-MM-DD/epoch/ts),
   `--oldest`/`--latest` (ts). Threads collapse to `↳ N replies (ts=…)`.
+  - `--replies` expands every thread inline under its parent (one
+    `conversations.replies` call per thread; `--replies-limit N`, default 50,
+    then `↳ +K more replies: slk thread …`). JSON nests them under `replies`;
+    CSV/TSV/table emit one row per message.
+  - `--thread <ts|permalink>` reads one thread instead of the channel (same as
+    `slk thread`); a thread permalink as the only argument implies it.
 - `slk thread <#chan|id> <ts|permalink>` — all replies in a thread.
+- A reply's permalink (`…?thread_ts=<parent>`) resolves to its parent wherever
+  a thread is expected (`thread`, `history --thread`, `reply`, `send --thread`,
+  `files upload --thread`).
 - Plain transcripts include profile/channel headings, full dates with local UTC
   offsets, and message links (including thread context for replies). Link
   generation uses one `auth.test` lookup per transcript; failure emits a warning
@@ -220,6 +229,7 @@ still included. Use plain transcripts or select fields for concise reading:
 
 ```bash
 slk --config work thread C01234567 1700000000.000100
+slk --config work history '#general' --since 2026-09-01 --replies
 slk --config work --json --fields ts,user,text,thread_ts thread C01234567 1700000000.000100
 slk --config work search 'in:general on:2026-09-10' --sort-dir asc --limit 100
 slk --config work --json --fields ts,user,text,permalink,thread_ts search 'in:general' --with-meta

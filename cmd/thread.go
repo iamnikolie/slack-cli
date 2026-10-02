@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 
@@ -19,24 +20,33 @@ var threadCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		q := url.Values{}
-		q.Set("channel", channel)
-		q.Set("ts", ts)
-		raw, hit, err := cli.Paginate(cmd.Context(), "conversations.replies", q, "messages", threadLimit)
-		if err != nil {
-			return err
-		}
-		paginationHint(stderr, hit, threadLimit)
-
-		return emitTranscript(cmd.Context(), raw, channel, ts)
+		return readThread(cmd.Context(), channel, ts, threadLimit)
 	},
+}
+
+// readThread prints a thread (parent first, then replies) as a transcript.
+func readThread(ctx context.Context, channel, ts string, limit int) error {
+	raw, hit, err := fetchReplies(ctx, channel, ts, limit)
+	if err != nil {
+		return err
+	}
+	paginationHint(stderr, hit, limit)
+	return emitTranscript(ctx, raw, channel, ts)
+}
+
+// fetchReplies returns up to limit messages of a thread; the parent comes first.
+func fetchReplies(ctx context.Context, channel, ts string, limit int) (json.RawMessage, bool, error) {
+	q := url.Values{}
+	q.Set("channel", channel)
+	q.Set("ts", ts)
+	return cli.Paginate(ctx, "conversations.replies", q, "messages", limit)
 }
 
 // resolveThreadTarget accepts either (permalink) or (#channel, ts). A permalink
 // carries its own channel; a bare ts requires the channel arg.
 func resolveThreadTarget(ctx context.Context, args []string) (channel, ts string, err error) {
 	if len(args) == 1 {
-		ch, t, ok := parseMessageRef(args[0])
+		ch, t, ok := parseThreadRef(args[0])
 		if !ok || ch == "" {
 			return "", "", fmt.Errorf("with one argument, pass a Slack permalink; otherwise give <#channel> <ts>")
 		}
@@ -46,7 +56,7 @@ func resolveThreadTarget(ctx context.Context, args []string) (channel, ts string
 	if err != nil {
 		return "", "", err
 	}
-	_, t, ok := parseMessageRef(args[1])
+	_, t, ok := parseThreadRef(args[1])
 	if !ok {
 		return "", "", fmt.Errorf("invalid ts %q (expected 1700000000.000100 or a permalink)", args[1])
 	}
