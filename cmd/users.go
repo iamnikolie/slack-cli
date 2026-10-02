@@ -1,9 +1,12 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/iamnikolie/slack-cli/internal/cache"
 	"github.com/spf13/cobra"
@@ -12,10 +15,14 @@ import (
 var usersFilter string
 
 var usersCmd = &cobra.Command{
-	Use:     "users",
+	Use:     "users [@user]",
 	Aliases: []string{"user"},
-	Short:   "List users from the directory cache",
+	Short:   "List users from the directory cache; with @user, show that profile",
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 1 {
+			return userViewCmd.RunE(cmd, args)
+		}
 		d, err := loadDirectory(cmd.Context())
 		if err != nil {
 			return err
@@ -50,13 +57,41 @@ var userViewCmd = &cobra.Command{
 			return err
 		}
 		var env struct {
-			User json.RawMessage `json:"user"`
+			User map[string]any `json:"user"`
 		}
 		if err := json.Unmarshal(raw, &env); err != nil {
 			return err
 		}
-		return emitObj(env.User, []string{"id", "name", "real_name", "tz", "is_admin", "is_bot"})
+		describeUser(cmd.Context(), env.User, time.Now())
+		b, err := json.Marshal(env.User)
+		if err != nil {
+			return err
+		}
+		return emitObj(b, []string{"id", "name", "real_name", "title", "status", "presence", "local_time", "tz", "is_admin", "is_bot", "deleted"})
 	},
+}
+
+// describeUser adds what an agent asks before pinging someone: their local
+// time, title, status and presence (presence is best-effort).
+func describeUser(ctx context.Context, u map[string]any, now time.Time) {
+	if off, ok := u["tz_offset"].(float64); ok {
+		u["local_time"] = now.In(time.FixedZone("", int(off))).Format("2006-01-02 15:04 Mon")
+	}
+	if p, ok := u["profile"].(map[string]any); ok {
+		u["title"] = p["title"]
+		status := strings.TrimSpace(fmt.Sprintf("%s %s", p["status_emoji"], p["status_text"]))
+		if exp, ok := p["status_expiration"].(float64); ok && exp > 0 && status != "" {
+			status += " (until " + time.Unix(int64(exp), 0).Format("2006-01-02 15:04") + ")"
+		}
+		u["status"] = status
+	}
+	if id, _ := u["id"].(string); id != "" && cli != nil {
+		if raw, err := cli.Call(ctx, "users.getPresence", url.Values{"user": {id}}); err == nil {
+			if p, err := fieldString(raw, "presence"); err == nil {
+				u["presence"] = p
+			}
+		}
+	}
 }
 
 func init() {
