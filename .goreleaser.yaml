@@ -46,3 +46,25 @@ changelog:
 release:
   draft: false
   prerelease: auto
+
+# Formula in iamnikolie/homebrew-tap, rewritten on every tag. Needs the
+# HOMEBREW_TAP_TOKEN secret (fine-grained, contents:write on homebrew-tap only).
+brews:
+  - name: slack-cli
+    repository:
+      owner: iamnikolie
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    commit_author:
+      name: Mykola Klitovchenko
+      email: mykola.klitovchenko@gmail.com
+    commit_msg_template: "{{ .ProjectName }} {{ .Version }}"
+    homepage: https://github.com/iamnikolie/slack-cli
+    description: "Agent-facing Slack CLI with token-lean output"
+    license: MIT
+    skip_upload: auto
+    install: |
+      bin.install "slk"
+    test: |
+      assert_match(/^slk version /, shell_output("#{bin}/slk version"))
