@@ -311,7 +311,9 @@ var tailCmd = &cobra.Command{
 	Short: "Only what is new in channels since the last tail (cursor per channel)",
 	Long: `Print messages newer than the last 'slk tail' of each channel, then move the
 cursor (~/.slk/<profile>/cursors.json). A channel's first tail starts at
---since (default 1d). --peek reads without moving cursors.
+--since (default 1d). An explicit --since also caps how far back a later tail
+reads (it starts at the later of cursor and --since), so a loop passing it
+never repeats a message. --peek reads without moving cursors.
 
 The cursor follows top-level messages: a new reply in an older thread is not
 shown here — 'slk unread' covers threads you follow.`,
@@ -331,10 +333,12 @@ shown here — 'slk unread' covers threads you follow.`,
 			return err
 		}
 		oldest := func(id string) string {
-			if c := cursors[id]; c != "" && !cmd.Flags().Changed("since") {
-				return c
+			floor := tsOf(since)
+			c := cursors[id]
+			if c == "" || (cmd.Flags().Changed("since") && floor > c) {
+				return floor
 			}
-			return tsOf(since)
+			return c
 		}
 		moved := cache.Cursors{}
 		sections, err := channelSections(ctx, ids, oldest, moved)

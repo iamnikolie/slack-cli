@@ -141,7 +141,7 @@ func runMessage(ctx context.Context, channel, thread, text string, f *msgFlags) 
 func dmChannel(ctx context.Context, ref string) (string, error) {
 	uid, err := userRef(ctx, ref)
 	if err != nil {
-		return "", fmt.Errorf("unknown user %q: %w", ref, err)
+		return "", err
 	}
 	d, err := loadDirectory(ctx)
 	if err != nil {

@@ -59,7 +59,8 @@ miss it refetches once, and a transcript's channel missing from it is looked up
   transcript across channels, threads inline. New replies under parents older
   than --since are not shown (use `unread`).
 - `slk tail <#chan...> [--since 1d] [--peek]` — only what is new since the last
-  tail of each channel (cursors in ~/.slk/<ws>/cursors.json). For loops. The
+  tail of each channel (cursors in ~/.slk/<ws>/cursors.json). For loops; an
+  explicit --since only caps a stale cursor, never rereads behind it. The
   cursor follows top-level messages: new replies in older threads need `unread`.
 
 ### Reading

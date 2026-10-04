@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/iamnikolie/slack-cli/internal/cache"
 	"github.com/iamnikolie/slack-cli/internal/client"
@@ -178,4 +179,33 @@ func TestDirectoryForBackfillsUncachedChannel(t *testing.T) {
 	saved, err := cache.Load("test")
 	require.NoError(t, err)
 	assert.Len(t, saved.Channels, 3) // backfilled entries persist
+}
+
+func TestTailExplicitSinceNeverRereadsBehindCursor(t *testing.T) {
+	t.Setenv("SLK_HOME", t.TempDir())
+	oldProfile, oldSince, oldPeek, oldReplies, oldLimit := profile, digestSince, tailPeek, digestReplies, digestLimit
+	t.Cleanup(func() {
+		profile, digestSince, tailPeek, digestReplies, digestLimit = oldProfile, oldSince, oldPeek, oldReplies, oldLimit
+		jsonOutput, dir = false, nil
+		_ = tailCmd.Flags().Set("since", "1d")
+		tailCmd.Flags().Lookup("since").Changed = false
+	})
+	profile, digestReplies, digestLimit, jsonOutput, tailPeek = "test", false, 100, true, true
+	dir = &cache.Directory{Channels: []cache.Channel{{ID: "C0123456", Name: "eng"}, {ID: "C0654321", Name: "ops"}}}
+	require.NoError(t, tailCmd.Flags().Set("since", "1d"))
+
+	recent := tsOf(time.Now().Add(-time.Hour))
+	stale := "1700000100.000000" // older than --since 1d
+	require.NoError(t, cache.SaveCursors(cache.Cursors{"C0123456": recent, "C0654321": stale}, "test"))
+	oldest := map[string]string{}
+	fakeSlack(t, map[string]func(map[string]string) string{
+		"conversations.history": func(f map[string]string) string {
+			oldest[f["channel"]] = f["oldest"]
+			return `{"ok":true,"messages":[]}`
+		},
+	})
+	tailCmd.SetContext(context.Background())
+	require.NoError(t, tailCmd.RunE(tailCmd, []string{"C0123456", "C0654321"}))
+	assert.Equal(t, recent, oldest["C0123456"])  // cursor is later than --since: cursor wins
+	assert.Greater(t, oldest["C0654321"], stale) // --since caps a stale cursor
 }

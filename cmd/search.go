@@ -128,6 +128,13 @@ func buildSearchQuery(base string, f searchFilters, now time.Time) (string, erro
 	if f.To != "" {
 		parts = append(parts, "to:"+strings.TrimPrefix(f.To, "@"))
 	}
+	if f.Since != "" && f.Until != "" {
+		since, err1 := parsePast(f.Since, now)
+		until, err2 := parsePast(f.Until, now)
+		if err1 == nil && err2 == nil && until.Format("2006-01-02") <= since.Format("2006-01-02") {
+			return "", fmt.Errorf("--until %s is not after --since %s: search days are whole, so the window is empty", until.Format("2006-01-02"), since.Format("2006-01-02"))
+		}
+	}
 	for _, b := range []struct {
 		value, op string
 		shift     int

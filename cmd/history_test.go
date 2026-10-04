@@ -147,3 +147,13 @@ func TestPinLatest(t *testing.T) {
 	assert.Equal(t, "2", q.Get("latest"))
 	assert.Empty(t, pinLatest(url.Values{}).Get("latest"))
 }
+
+func TestTimeBoundsRejectsEmptyWindow(t *testing.T) {
+	_, err := timeBounds("", "", "1d", "2d")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--until")
+	_, err = timeBounds("", "", "2d", "1d")
+	assert.NoError(t, err)
+	_, err = timeBounds("1700000200.000000", "1700000100.000000", "", "")
+	assert.Error(t, err)
+}

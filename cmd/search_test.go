@@ -120,3 +120,11 @@ func TestSearchPaginationKeepsPageSizeAndOrder(t *testing.T) {
 	assert.JSONEq(t, `{"ts":"0000000100.000100"}`, string(matches[100]))
 	assert.JSONEq(t, `{"ts":"0000000149.000100"}`, string(matches[149]))
 }
+
+func TestBuildSearchQueryRejectsEmptyWindow(t *testing.T) {
+	now := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+	_, err := buildSearchQuery("x", searchFilters{Since: "2026-10-03", Until: "2026-10-02"}, now)
+	assert.Error(t, err)
+	_, err = buildSearchQuery("x", searchFilters{Since: "2026-10-02", Until: "2026-10-03"}, now)
+	assert.NoError(t, err)
+}

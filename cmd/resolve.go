@@ -17,7 +17,7 @@ import (
 
 // errNotInCache signals a #channel/@user not found in the directory cache;
 // callers may refetch once and retry.
-var errNotInCache = errors.New("not found in directory cache")
+var errNotInCache = errors.New("not found in the directory")
 
 var (
 	reChannelID = regexp.MustCompile(`^[CDG][A-Z0-9]{6,}$`)
@@ -44,7 +44,7 @@ func resolveChannel(d *cache.Directory, ref string) (string, error) {
 			}
 		}
 	}
-	return "", errNotInCache
+	return "", fmt.Errorf("channel %s: %w", ref, errNotInCache)
 }
 
 // resolveUser maps a raw ID / @name / name / real name to a user ID.
@@ -60,7 +60,7 @@ func resolveUser(d *cache.Directory, ref string) (string, error) {
 			}
 		}
 	}
-	return "", errNotInCache
+	return "", fmt.Errorf("user %s: %w", ref, errNotInCache)
 }
 
 // errInvalidTS returns a consistent error for a malformed message ts.
@@ -513,12 +513,14 @@ func channelRef(ctx context.Context, ref string) (string, error) {
 		return "", err
 	}
 	id, err := resolveChannel(d, ref)
-	if err == errNotInCache {
+	if errors.Is(err, errNotInCache) {
 		if d, err = fetchDirectory(ctx); err != nil {
 			return "", err
 		}
 		dir = d
-		return resolveChannel(d, ref)
+		if id, err = resolveChannel(d, ref); err != nil {
+			return "", fmt.Errorf("%w (re-synced just now); find it with 'slk channels --filter %s'", err, strings.TrimPrefix(ref, "#"))
+		}
 	}
 	return id, err
 }
@@ -530,12 +532,14 @@ func userRef(ctx context.Context, ref string) (string, error) {
 		return "", err
 	}
 	id, err := resolveUser(d, ref)
-	if err == errNotInCache {
+	if errors.Is(err, errNotInCache) {
 		if d, err = fetchDirectory(ctx); err != nil {
 			return "", err
 		}
 		dir = d
-		return resolveUser(d, ref)
+		if id, err = resolveUser(d, ref); err != nil {
+			return "", fmt.Errorf("%w (re-synced just now; bots are not listed); find it with 'slk users --filter %s'", err, strings.TrimPrefix(ref, "@"))
+		}
 	}
 	return id, err
 }

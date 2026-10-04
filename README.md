@@ -150,7 +150,9 @@ Run `slk skill` for the full agent-facing reference, or `slk <command> --help`.
   threads inline (`--replies=false` to collapse them).
 - `slk tail <#chan...>` — only what is new since the previous `tail` of each
   channel; cursors live in `~/.slk/<profile>/cursors.json` (`--peek` leaves
-  them). A channel's first tail starts at `--since` (default 1d). The cursor
+  them). A channel's first tail starts at `--since` (default 1d); an explicit
+  `--since` on later tails only caps a stale cursor, so a loop passing it never
+  repeats a message. The cursor
   follows top-level messages, so new replies in older threads show up in
   `unread`, not `tail`.
 

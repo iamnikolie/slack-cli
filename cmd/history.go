@@ -106,6 +106,11 @@ func timeBounds(oldest, latest, since, until string) (url.Values, error) {
 		}
 		q.Set(key, bound)
 	}
+	lo, errLo := strconv.ParseFloat(q.Get("oldest"), 64)
+	hi, errHi := strconv.ParseFloat(q.Get("latest"), 64)
+	if errLo == nil && errHi == nil && hi <= lo {
+		return nil, fmt.Errorf("--until (%s) is not after --since (%s): the window is empty", tsClock(q.Get("latest")), tsClock(q.Get("oldest")))
+	}
 	return q, nil
 }
 

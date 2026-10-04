@@ -67,3 +67,12 @@ func TestParseMessageRef(t *testing.T) {
 	_, _, ok = parseMessageRef("garbage")
 	assert.False(t, ok)
 }
+
+func TestResolveNotFoundNamesTheRef(t *testing.T) {
+	_, err := resolveChannel(&cache.Directory{}, "#nope")
+	require.ErrorIs(t, err, errNotInCache)
+	assert.Contains(t, err.Error(), "channel #nope")
+	_, err = resolveUser(&cache.Directory{}, "@ghost")
+	require.ErrorIs(t, err, errNotInCache)
+	assert.Contains(t, err.Error(), "user @ghost")
+}
