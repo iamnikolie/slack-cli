@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 
 	"github.com/spf13/cobra"
 )
@@ -43,15 +44,74 @@ func readThread(ctx context.Context, channel, ts string, limit int, bounds url.V
 	return emitTranscript(ctx, raw, channel, ts)
 }
 
-// fetchReplies returns up to limit messages of a thread; the parent comes first.
-func fetchReplies(ctx context.Context, channel, ts string, limit int, bounds url.Values) (json.RawMessage, bool, error) {
+// fetchReplies returns a thread's parent, then its latest limit replies oldest
+// first; more reports replies left out. Slack pages a thread from the newest
+// replies back and repeats the parent on every page, so pages are merged by ts
+// rather than concatenated. limit 0 returns just the message at ts.
+func fetchReplies(ctx context.Context, channel, ts string, limit int, bounds url.Values) (raw json.RawMessage, more bool, err error) {
 	q := url.Values{}
 	for k, v := range bounds {
 		q[k] = v
 	}
+	q = pinLatest(q)
 	q.Set("channel", channel)
 	q.Set("ts", ts)
-	return cli.Paginate(ctx, "conversations.replies", q, "messages", limit)
+
+	var parent json.RawMessage
+	var replies []json.RawMessage
+	seen := map[string]bool{}
+	cursor := ""
+	for {
+		q.Set("limit", strconv.Itoa(min(max(limit-len(replies), 1), 200)))
+		if cursor != "" {
+			q.Set("cursor", cursor)
+		}
+		b, err := cli.Call(ctx, "conversations.replies", q)
+		if err != nil {
+			return nil, false, err
+		}
+		var page struct {
+			Messages []json.RawMessage `json:"messages"`
+			HasMore  bool              `json:"has_more"`
+			Meta     struct {
+				NextCursor string `json:"next_cursor"`
+			} `json:"response_metadata"`
+		}
+		if err := json.Unmarshal(b, &page); err != nil {
+			return nil, false, fmt.Errorf("fetchReplies: decode: %w", err)
+		}
+		for _, m := range page.Messages {
+			var h struct {
+				TS string `json:"ts"`
+			}
+			_ = json.Unmarshal(m, &h)
+			switch {
+			case h.TS == ts:
+				if parent == nil {
+					parent = m
+				}
+			case !seen[h.TS]:
+				seen[h.TS] = true
+				replies = append(replies, m)
+			}
+		}
+		cursor = page.Meta.NextCursor
+		if cursor == "" || len(replies) >= limit {
+			more = cursor != "" || page.HasMore
+			break
+		}
+	}
+	sortRawByTS(replies)
+	if len(replies) > limit {
+		more = true
+		replies = replies[len(replies)-limit:]
+	}
+	out := make([]json.RawMessage, 0, len(replies)+1)
+	if parent != nil {
+		out = append(out, parent)
+	}
+	raw, err = json.Marshal(append(out, replies...))
+	return raw, more, err
 }
 
 // resolveThreadTarget accepts either (permalink) or (#channel, ts). A permalink
@@ -76,7 +136,7 @@ func resolveThreadTarget(ctx context.Context, args []string) (channel, ts string
 }
 
 func init() {
-	threadCmd.Flags().IntVar(&threadLimit, "limit", 200, "max replies")
+	threadCmd.Flags().IntVar(&threadLimit, "limit", 200, "max replies (the latest N)")
 	threadCmd.Flags().StringVar(&threadSince, "since", "", "only replies on/after this time (2h, 3d, today, YYYY-MM-DD, …)")
 	threadCmd.Flags().StringVar(&threadUntil, "until", "", "only replies before this time")
 	rootCmd.AddCommand(threadCmd)

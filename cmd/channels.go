@@ -58,6 +58,7 @@ var channelViewCmd = &cobra.Command{
 		}
 		q := url.Values{}
 		q.Set("channel", id)
+		q.Set("include_num_members", "true")
 		raw, err := cli.Call(cmd.Context(), "conversations.info", q)
 		if err != nil {
 			return err
@@ -69,8 +70,27 @@ var channelViewCmd = &cobra.Command{
 		if err := json.Unmarshal(raw, &env); err != nil {
 			return err
 		}
-		return emitObj(env.Channel, []string{"id", "name", "is_private", "num_members", "topic", "purpose"})
+		return emitObj(flattenTopics(env.Channel), []string{"id", "name", "is_private", "num_members", "topic", "purpose"})
 	},
+}
+
+// flattenTopics replaces Slack's topic/purpose objects ({value, creator,
+// last_set}) with their text, which is all a reader wants.
+func flattenTopics(raw json.RawMessage) json.RawMessage {
+	var m map[string]any
+	if json.Unmarshal(raw, &m) != nil {
+		return raw
+	}
+	for _, k := range []string{"topic", "purpose"} {
+		if obj, ok := m[k].(map[string]any); ok {
+			m[k] = obj["value"]
+		}
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return raw
+	}
+	return b
 }
 
 // channelKind classifies a channel as one of im, mpim, private, or public.

@@ -116,7 +116,12 @@ func TestTailMovesCursorUnlessPeek(t *testing.T) {
 	dir = &cache.Directory{}
 
 	var oldest []string
+	infoCalls := 0
 	fakeSlack(t, map[string]func(map[string]string) string{
+		"conversations.info": func(map[string]string) string {
+			infoCalls++
+			return `{"ok":true,"channel":{"id":"C0123456","name":"eng"}}`
+		},
 		"conversations.history": func(f map[string]string) string {
 			oldest = append(oldest, f["oldest"])
 			return `{"ok":true,"messages":[{"ts":"1700000300.000000","text":"b"},{"ts":"1700000200.000000","text":"a"}]}`
@@ -137,4 +142,40 @@ func TestTailMovesCursorUnlessPeek(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "1700000300.000000", c["C0123456"])
 	assert.Equal(t, []string{"1700000100.000000", "1700000100.000000"}, oldest)
+	assert.Equal(t, 1, infoCalls) // the uncached channel is looked up once, then cached
+}
+
+func TestDirectoryForBackfillsUncachedChannel(t *testing.T) {
+	t.Setenv("SLK_HOME", t.TempDir())
+	oldProfile := profile
+	t.Cleanup(func() { profile, dir = oldProfile, nil })
+	profile = "test"
+	dir = &cache.Directory{
+		Channels: []cache.Channel{{ID: "C0000001", Name: "general"}},
+		Users:    []cache.User{{ID: "U2", Name: "ann"}},
+	}
+	var asked []string
+	fakeSlack(t, map[string]func(map[string]string) string{
+		"conversations.info": func(f map[string]string) string {
+			asked = append(asked, f["channel"])
+			switch f["channel"] {
+			case "C0C0SJHGL6B":
+				return `{"ok":true,"channel":{"id":"C0C0SJHGL6B","name":"alerts"}}`
+			case "D0000002":
+				return `{"ok":true,"channel":{"id":"D0000002","is_im":true,"user":"U2"}}`
+			}
+			return `{"ok":false,"error":"channel_not_found"}`
+		},
+	})
+	d, err := directoryFor(context.Background(), "C0000001", "C0C0SJHGL6B", "D0000002", "C0000009", "C0C0SJHGL6B")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"C0C0SJHGL6B", "D0000002", "C0000009"}, asked) // cached and repeated IDs skipped
+	assert.Equal(t, "#general", channelLabel(d, "C0000001"))
+	assert.Equal(t, "#alerts", channelLabel(d, "C0C0SJHGL6B"))
+	assert.Equal(t, "@ann", channelLabel(d, "D0000002"))
+	assert.Equal(t, "C0000009", channelLabel(d, "C0000009"))
+
+	saved, err := cache.Load("test")
+	require.NoError(t, err)
+	assert.Len(t, saved.Channels, 3) // backfilled entries persist
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -46,7 +47,7 @@ func TestExpandRepliesAttachesThreadsUnderParents(t *testing.T) {
 		assert.Equal(t, "/conversations.replies", r.URL.Path)
 		require.NoError(t, r.ParseForm())
 		assert.Equal(t, "C0123456", r.Form.Get("channel"))
-		assert.Equal(t, "3", r.Form.Get("limit")) // replies-limit 2 + parent
+		assert.Equal(t, "2", r.Form.Get("limit")) // replies-limit; Slack adds the parent
 		calls = append(calls, r.Form.Get("ts"))
 		fmt.Fprint(w, `{"ok":true,"messages":[
 		  {"ts":"1700000000.000100","text":"parent","reply_count":5},
@@ -68,7 +69,7 @@ func TestExpandRepliesAttachesThreadsUnderParents(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, transcript, "    ↳ [")
 	assert.Contains(t, transcript, "ts=1700000100.000200 @system: r1")
-	assert.Contains(t, transcript, "↳ +3 more replies: slk thread C0123456 1700000000.000100")
+	assert.Contains(t, transcript, "↳ +3 earlier replies: slk thread C0123456 1700000000.000100")
 	assert.Equal(t, 1, strings.Count(transcript, ": parent\n")) // parent not repeated among replies
 
 	flat, err := decodeArray(flattenReplies(out))
@@ -133,6 +134,16 @@ func TestParsePastAndFuture(t *testing.T) {
 	}
 }
 
-func TestReverseArray(t *testing.T) {
-	assert.JSONEq(t, `[{"ts":"2"},{"ts":"1"}]`, string(reverseArray([]byte(`[{"ts":"1"},{"ts":"2"}]`))))
+func TestSortByTS(t *testing.T) {
+	in := []byte(`[{"ts":"1700000002.000000"},{"ts":"1700000003.000000"},{"ts":"1700000001.000000"}]`)
+	assert.JSONEq(t, `[{"ts":"1700000001.000000"},{"ts":"1700000002.000000"},{"ts":"1700000003.000000"}]`, string(sortByTS(in, false)))
+	assert.JSONEq(t, `[{"ts":"1700000003.000000"},{"ts":"1700000002.000000"},{"ts":"1700000001.000000"}]`, string(sortByTS(in, true)))
+}
+
+func TestPinLatest(t *testing.T) {
+	q := pinLatest(url.Values{"oldest": {"1700000000"}})
+	assert.NotEmpty(t, q.Get("latest"), "oldest alone makes Slack page from the oldest end")
+	q = pinLatest(url.Values{"oldest": {"1"}, "latest": {"2"}})
+	assert.Equal(t, "2", q.Get("latest"))
+	assert.Empty(t, pinLatest(url.Values{}).Get("latest"))
 }

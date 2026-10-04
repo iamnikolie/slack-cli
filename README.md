@@ -150,20 +150,22 @@ Run `slk skill` for the full agent-facing reference, or `slk <command> --help`.
   threads inline (`--replies=false` to collapse them).
 - `slk tail <#chan...>` — only what is new since the previous `tail` of each
   channel; cursors live in `~/.slk/<profile>/cursors.json` (`--peek` leaves
-  them). A channel's first tail starts at `--since` (default 1d).
+  them). A channel's first tail starts at `--since` (default 1d). The cursor
+  follows top-level messages, so new replies in older threads show up in
+  `unread`, not `tail`.
 
 ### Reading
 - `slk history <#chan|@user|id>` — `--limit` (latest N), `--since`/`--until`,
   `--oldest`/`--latest` (ts). Printed oldest first; `--desc` flips. Threads
   collapse to `↳ N replies (ts=…)`.
   - `--replies` expands every thread inline under its parent (one
-    `conversations.replies` call per thread; `--replies-limit N`, default 50,
-    then `↳ +K more replies: slk thread …`). JSON nests them under `replies`;
+    `conversations.replies` call per thread; the latest `--replies-limit N`,
+    default 50, after `↳ +K earlier replies: slk thread …`). JSON nests them under `replies`;
     CSV/TSV/table emit one row per message.
   - `--thread <ts|permalink>` reads one thread instead of the channel (same as
     `slk thread`); a thread permalink as the only argument implies it.
 - `slk thread <#chan|id> <ts|permalink>` — all replies in a thread
-  (`--since`/`--until` window long ones).
+  (`--limit` keeps the latest N, default 200; `--since`/`--until` window long ones).
 - `slk get <permalink | #chan ts> [--context N]` — one message, marked `»`, with
   N messages on each side; a top-level message shows its replies, a reply shows
   its thread around it.
@@ -281,7 +283,8 @@ slk --config work --fields messages.matches api search.messages -f 'query=in:gen
 ```
 
 ### Users
-- `slk users` — `--filter`. `slk user <@user|id>` (or `user view`) — title,
+- `slk users` — `--filter`; lists the cache, so `--fields` takes only `id`,
+  `name`, `real_name`. `slk user <@user|id>` (or `user view`) — title,
   status, presence, local time and time zone.
 
 ## Persistent flags
@@ -304,6 +307,7 @@ slk --config work --fields messages.matches api search.messages -f 'query=in:gen
 - The directory cache (channels + users) is read by name-resolution and `users`/
   `channels` listing. `slk sync` is the heaviest call; it is cached on disk.
   Bots and deleted users are excluded; DM channels are named after the partner.
+  A channel a transcript shows that the cache lacks is looked up and added.
 - `search.messages` can lag the search index — a just-posted message may not be
   findable for a few seconds. Not a bug.
 - `update`/`delete` only affect messages you authored.

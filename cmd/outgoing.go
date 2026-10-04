@@ -73,7 +73,7 @@ func deliver(ctx context.Context, o outgoing, f *msgFlags) (json.RawMessage, err
 	}
 	if dryRun {
 		plan := map[string]any{"dry_run": true, "method": method, "channel": o.Channel, "format": field, "text": o.Text}
-		if d, err := loadDirectory(ctx); err == nil {
+		if d, err := directoryFor(ctx, o.Channel); err == nil {
 			plan["channel_name"] = channelLabel(d, o.Channel)
 		}
 		for k, v := range map[string]string{"ts": o.TS, "thread_ts": o.Thread} {
@@ -237,8 +237,12 @@ func runReact(ctx context.Context, args []string, remove bool) error {
 		method = "reactions.remove"
 	}
 	if dryRun {
-		b, _ := json.Marshal(map[string]any{"dry_run": true, "method": method, "channel": ch, "ts": ts, "emoji": emoji})
-		return emitObj(b, []string{"dry_run", "method", "channel", "ts", "emoji"})
+		plan := map[string]any{"dry_run": true, "method": method, "channel": ch, "ts": ts, "emoji": emoji}
+		if d, err := directoryFor(ctx, ch); err == nil {
+			plan["channel_name"] = channelLabel(d, ch)
+		}
+		b, _ := json.Marshal(plan)
+		return emitObj(b, []string{"dry_run", "method", "channel", "channel_name", "ts", "emoji"})
 	}
 	if _, err := cli.Call(ctx, method, url.Values{"channel": {ch}, "timestamp": {ts}, "name": {emoji}}); err != nil {
 		return err

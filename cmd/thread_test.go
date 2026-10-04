@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -30,4 +31,26 @@ func TestParseThreadRefPrefersParentOfReplyPermalink(t *testing.T) {
 	_, ts, ok = parseThreadRef("1700000100.000200")
 	require.True(t, ok)
 	assert.Equal(t, "1700000100.000200", ts) // bare ts is taken as given
+}
+
+func TestFetchRepliesKeepsLatestAcrossPages(t *testing.T) {
+	var limits []string
+	fakeSlack(t, map[string]func(map[string]string) string{
+		"conversations.replies": func(f map[string]string) string {
+			assert.NotEmpty(t, f["latest"], "oldest alone would page from the oldest end")
+			limits = append(limits, f["limit"])
+			// Slack pages a thread newest first and repeats the parent each page.
+			if f["cursor"] == "" {
+				return `{"ok":true,"has_more":true,"messages":[{"ts":"1.000000"},{"ts":"7.000000"},{"ts":"8.000000"}],
+				  "response_metadata":{"next_cursor":"p2"}}`
+			}
+			return `{"ok":true,"has_more":true,"messages":[{"ts":"1.000000"},{"ts":"5.000000"},{"ts":"6.000000"}],
+			  "response_metadata":{"next_cursor":"p3"}}`
+		},
+	})
+	raw, more, err := fetchReplies(context.Background(), "C0123456", "1.000000", 3, url.Values{"oldest": {"0.5"}})
+	require.NoError(t, err)
+	assert.True(t, more)
+	assert.Equal(t, []string{"3", "1"}, limits)
+	assert.JSONEq(t, `[{"ts":"1.000000"},{"ts":"6.000000"},{"ts":"7.000000"},{"ts":"8.000000"}]`, string(raw))
 }

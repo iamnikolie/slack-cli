@@ -23,6 +23,11 @@ var usersCmd = &cobra.Command{
 		if len(args) == 1 {
 			return userViewCmd.RunE(cmd, args)
 		}
+		for _, f := range fieldsFlag {
+			if f != "id" && f != "name" && f != "real_name" {
+				return fmt.Errorf("users lists the directory cache, which holds id, name, real_name only; for %q use 'slk users @user'", f)
+			}
+		}
 		d, err := loadDirectory(cmd.Context())
 		if err != nil {
 			return err

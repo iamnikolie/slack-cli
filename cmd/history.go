@@ -5,6 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
+	"sort"
+	"strconv"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -64,16 +68,14 @@ A thread permalink as the only argument implies --thread.`,
 		if err != nil {
 			return err
 		}
-		q := bounds
+		q := pinLatest(bounds)
 		q.Set("channel", id)
 		raw, hit, err := cli.Paginate(ctx, "conversations.history", q, "messages", historyLimit)
 		if err != nil {
 			return err
 		}
 		paginationHint(stderr, hit, historyLimit)
-		if !historyDesc {
-			raw = reverseArray(raw)
-		}
+		raw = sortByTS(raw, historyDesc)
 
 		if historyReplies {
 			if raw, err = expandReplies(ctx, raw, id, historyRepliesLimit, ""); err != nil {
@@ -107,14 +109,26 @@ func timeBounds(oldest, latest, since, until string) (url.Values, error) {
 	return q, nil
 }
 
-// reverseArray flips a JSON array; Slack returns history newest first.
-func reverseArray(raw json.RawMessage) json.RawMessage {
+// pinLatest sets latest to now when only oldest is given. Slack pages history
+// and replies from the newest message back, except with oldest alone: then it
+// starts at oldest, so a capped read returned the oldest N of the window.
+func pinLatest(q url.Values) url.Values {
+	if q.Get("oldest") != "" && q.Get("latest") == "" {
+		q.Set("latest", strconv.FormatInt(time.Now().Unix()+60, 10))
+	}
+	return q
+}
+
+// sortByTS orders a JSON array of messages by ts (oldest first, or newest
+// first with desc); Slack's page order depends on which bounds were set.
+func sortByTS(raw json.RawMessage, desc bool) json.RawMessage {
 	var items []json.RawMessage
 	if json.Unmarshal(raw, &items) != nil {
 		return raw
 	}
-	for i, j := 0, len(items)-1; i < j; i, j = i+1, j-1 {
-		items[i], items[j] = items[j], items[i]
+	sortRawByTS(items)
+	if desc {
+		slices.Reverse(items)
 	}
 	b, err := json.Marshal(items)
 	if err != nil {
@@ -123,8 +137,21 @@ func reverseArray(raw json.RawMessage) json.RawMessage {
 	return b
 }
 
-// expandReplies attaches each thread parent's replies (oldest first, parent
-// excluded) under a "replies" key; only, when set, limits it to that parent. A
+// sortRawByTS sorts messages oldest first. Slack ts values share one width, so
+// string order is time order.
+func sortRawByTS(items []json.RawMessage) {
+	key := func(m json.RawMessage) string {
+		var h struct {
+			TS string `json:"ts"`
+		}
+		_ = json.Unmarshal(m, &h)
+		return h.TS
+	}
+	sort.SliceStable(items, func(i, j int) bool { return key(items[i]) < key(items[j]) })
+}
+
+// expandReplies attaches each thread parent's latest perThread replies (oldest
+// first, parent excluded) under a "replies" key; only, when set, limits it to that parent. A
 // thread that fails to load keeps its reply count and is reported on stderr
 // instead of failing the whole history.
 func expandReplies(ctx context.Context, raw json.RawMessage, channel string, perThread int, only string) (json.RawMessage, error) {
@@ -141,8 +168,7 @@ func expandReplies(ctx context.Context, raw json.RawMessage, channel string, per
 		if parent, _ := m["thread_ts"].(string); parent != "" && parent != ts {
 			continue // a broadcast reply, not a thread parent
 		}
-		// +1: conversations.replies returns the parent first.
-		thread, _, err := fetchReplies(ctx, channel, ts, perThread+1, nil)
+		thread, _, err := fetchReplies(ctx, channel, ts, perThread, nil)
 		if err != nil {
 			fmt.Fprintf(stderr, "thread %s: replies unavailable: %v\n", ts, err)
 			continue
@@ -203,7 +229,7 @@ func init() {
 	historyCmd.Flags().StringVar(&historyUntil, "until", "", "only messages before this time (same forms as --since)")
 	historyCmd.Flags().StringVar(&historyThread, "thread", "", "read this thread instead of the channel (parent ts or permalink)")
 	historyCmd.Flags().BoolVar(&historyReplies, "replies", false, "expand thread replies inline under each parent (one API call per thread)")
-	historyCmd.Flags().IntVar(&historyRepliesLimit, "replies-limit", 50, "max replies shown per thread with --replies")
+	historyCmd.Flags().IntVar(&historyRepliesLimit, "replies-limit", 50, "latest replies shown per thread with --replies")
 	historyCmd.Flags().BoolVar(&historyDesc, "desc", false, "newest message first (default: oldest first)")
 	rootCmd.AddCommand(historyCmd)
 }

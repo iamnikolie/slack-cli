@@ -35,7 +35,8 @@ or a raw `ts` (`1700000000.000100`). Where a channel is expected, `@user` (or a
 `U…` ID) means the DM with that user. Times (`--since/--until/--at`): `2h`, `3d`,
 `1w`, `today`, `yesterday`, `YYYY-MM-DD[ HH:MM]` (local), RFC3339, epoch, ts;
 `--at` also takes `+2h`, `in 30m`, `16:00`, `tomorrow 09:00`. The directory cache resolves names; on a
-miss it refetches once. `slk sync` refreshes it manually.
+miss it refetches once, and a transcript's channel missing from it is looked up
+(`conversations.info`) and cached. `slk sync` refreshes it manually.
 
 ## Commands
 - `slk me` — who am I.
@@ -56,16 +57,19 @@ miss it refetches once. `slk sync` refreshes it manually.
   transcript across channels, threads inline. New replies under parents older
   than --since are not shown (use `unread`).
 - `slk tail <#chan...> [--since 1d] [--peek]` — only what is new since the last
-  tail of each channel (cursors in ~/.slk/<ws>/cursors.json). For loops.
+  tail of each channel (cursors in ~/.slk/<ws>/cursors.json). For loops. The
+  cursor follows top-level messages: new replies in older threads need `unread`.
 
 ### Reading
 - `slk history <#chan|@user|id|permalink> [--limit N] [--since 3d] [--until ...] [--desc]`
   — latest N messages in the window, printed oldest first (`--desc` flips).
   - `--replies [--replies-limit 50]` — expand every thread inline under its
-    parent (`    ↳ ` lines); one API call per thread. JSON nests `replies`.
+    parent (`    ↳ ` lines), the latest N replies of each; one API call per
+    thread. JSON nests `replies`.
   - `--thread <ts|permalink>` — read one thread instead (= `slk thread`);
     `slk history <thread-permalink>` implies it.
-- `slk thread <#chan|id> <ts|permalink> [--since ...] [--until ...]` — a whole thread.
+- `slk thread <#chan|id> <ts|permalink> [--since ...] [--until ...] [--limit 200]` — a
+  whole thread: the parent plus its latest N replies.
 - `slk get <permalink | #chan ts> [--context N]` — one message (marked `»`) with N
   messages around it; a top-level message shows its replies, a reply shows its
   thread. Best first step when all you have is a link.
@@ -106,8 +110,9 @@ miss it refetches once. `slk sync` refreshes it manually.
   `has_more` includes matches omitted from a partially returned last page;
   `has_next_page` means another API page is available within Slack's 100-page cap.
   Metadata includes page/page_count/page_size/pages_fetched/omitted_from_last_page.
-- `slk users [--filter x]` ; `slk user <@user|id>` (= `user view`) — title,
-  status, presence, local time and tz: check before pinging someone.
+- `slk users [--filter x]` (cache: id, name, real_name only) ; `slk user <@user|id>`
+  (= `user view`) — title, status, presence, local time and tz: check before
+  pinging someone.
 - `slk api <method.name> -f key=value` — raw Web API escape hatch.
   Example: `slk --config work --fields messages.matches api search.messages -f 'query=in:general on:2026-09-10'`.
 

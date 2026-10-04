@@ -260,7 +260,7 @@ func renderTranscript(data json.RawMessage, d *cache.Directory, channel, baseURL
 		writeTranscriptMsg(&b, m, "", byID, d, channel, baseURL, thread)
 		if m.Replies == nil {
 			if m.ReplyCount > 0 {
-				fmt.Fprintf(&b, "  ↳ %d replies (ts=%s)\n", m.ReplyCount, m.TS)
+				fmt.Fprintf(&b, "  ↳ %d %s (ts=%s)\n", m.ReplyCount, plural(m.ReplyCount, "reply", "replies"), m.TS)
 			}
 			continue
 		}
@@ -268,7 +268,7 @@ func renderTranscript(data json.RawMessage, d *cache.Directory, channel, baseURL
 			writeTranscriptMsg(&b, r, "    ↳ ", byID, d, channel, baseURL, m.TS)
 		}
 		if more := m.ReplyCount - len(m.Replies); more > 0 {
-			fmt.Fprintf(&b, "    ↳ +%d more replies: slk thread %s %s\n", more, channel, m.TS)
+			fmt.Fprintf(&b, "    ↳ +%d earlier %s: slk thread %s %s\n", more, plural(more, "reply", "replies"), channel, m.TS)
 		}
 	}
 	return b.String(), nil
@@ -291,7 +291,12 @@ func writeTranscriptMsg(b *strings.Builder, m transcriptMsg, prefix string, byID
 	if m.Edited != nil {
 		author += " (edited)"
 	}
-	fmt.Fprintf(b, "%s[%s] ts=%s %s: %s\n", prefix, tsClock(m.TS), m.TS, author, truncateText(expandMentions(text, d), maxChars))
+	text = truncateText(expandMentions(text, d), maxChars)
+	if pad != "" {
+		// keep a multi-line reply inside its thread's indent
+		text = strings.ReplaceAll(text, "\n", "\n"+pad+"  ")
+	}
+	fmt.Fprintf(b, "%s[%s] ts=%s %s: %s\n", prefix, tsClock(m.TS), m.TS, author, text)
 	for _, file := range m.Files {
 		fmt.Fprintf(b, "%s  file %s: %s (%s, %d bytes)\n", pad, file.ID, file.Name, file.MIME, file.Size)
 	}
@@ -369,6 +374,14 @@ func tsClock(ts string) string {
 	return time.Unix(n, 0).Format("2006-01-02 15:04:05 -07:00")
 }
 
+// plural picks the word form for n ("1 reply", "2 replies").
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
 func channelLabel(d *cache.Directory, id string) string {
 	if d != nil {
 		for _, c := range d.Channels {
@@ -402,7 +415,7 @@ func emitTranscript(ctx context.Context, raw json.RawMessage, channel, thread st
 	if outputFormat != "" || len(fieldsFlag) > 0 {
 		return renderTable(flattenReplies(raw), []string{"ts", "user", "text", "thread_ts", "reply_count"})
 	}
-	d, err := loadDirectory(ctx)
+	d, err := directoryFor(ctx, channel)
 	if err != nil {
 		return err
 	}

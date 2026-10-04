@@ -46,3 +46,8 @@ func TestChannelKind(t *testing.T) {
 	assert.Equal(t, "mpim", channelKind(cache.Channel{IsMPIM: true, IsPrivate: true}))
 	assert.Equal(t, "im", channelKind(cache.Channel{IsIM: true}))
 }
+
+func TestFlattenTopicsKeepsOnlyText(t *testing.T) {
+	out := flattenTopics([]byte(`{"id":"C1","topic":{"value":"deploys","creator":"U1","last_set":1},"purpose":{"value":"","creator":"","last_set":0}}`))
+	assert.JSONEq(t, `{"id":"C1","topic":"deploys","purpose":""}`, string(out))
+}

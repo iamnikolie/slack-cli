@@ -126,6 +126,6 @@ func profileExempt(name string) bool {
 
 func paginationHint(w io.Writer, hitLimit bool, limit int) {
 	if hitLimit {
-		fmt.Fprintf(w, "(showing %d results — limit reached; pass --limit %d for more)\n", limit, limit*2)
+		fmt.Fprintf(w, "(showing %d %s — limit reached; pass --limit %d for more)\n", limit, plural(limit, "result", "results"), limit*2)
 	}
 }

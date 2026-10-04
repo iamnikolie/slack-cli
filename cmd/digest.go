@@ -23,7 +23,11 @@ type section struct {
 // emitSections prints one transcript per non-empty channel, or a JSON array
 // of {channel,name,messages}. empty is what to say when nothing matched.
 func emitSections(ctx context.Context, sections []section, empty string) error {
-	d, err := loadDirectory(ctx)
+	ids := make([]string, len(sections))
+	for i, s := range sections {
+		ids[i] = s.Channel
+	}
+	d, err := directoryFor(ctx, ids...)
 	if err != nil {
 		return err
 	}
@@ -72,7 +76,8 @@ func emitSections(ctx context.Context, sections []section, empty string) error {
 }
 
 // channelWindow returns up to limit messages after oldest, oldest first.
-// With only oldest set Slack returns the messages right after it.
+// With only oldest set Slack returns the messages right after it (the earliest
+// of the window, which tail and get's after-context want).
 func channelWindow(ctx context.Context, channel, oldest string, limit int) (json.RawMessage, bool, error) {
 	q := url.Values{}
 	q.Set("channel", channel)
@@ -81,7 +86,7 @@ func channelWindow(ctx context.Context, channel, oldest string, limit int) (json
 	if err != nil {
 		return nil, false, err
 	}
-	return reverseArray(raw), hit, nil
+	return sortByTS(raw, false), hit, nil
 }
 
 // activeChannels finds channels with indexed messages since t via search, most
@@ -190,7 +195,7 @@ shows its thread: the parent plus N replies around it.`,
 		if err != nil {
 			return err
 		}
-		msgs := reverseArray(before)
+		msgs := sortByTS(before, false)
 		if getContext > 0 {
 			after, _, err := channelWindow(ctx, channel, ts, getContext)
 			if err != nil {
@@ -306,7 +311,10 @@ var tailCmd = &cobra.Command{
 	Short: "Only what is new in channels since the last tail (cursor per channel)",
 	Long: `Print messages newer than the last 'slk tail' of each channel, then move the
 cursor (~/.slk/<profile>/cursors.json). A channel's first tail starts at
---since (default 1d). --peek reads without moving cursors.`,
+--since (default 1d). --peek reads without moving cursors.
+
+The cursor follows top-level messages: a new reply in an older thread is not
+shown here — 'slk unread' covers threads you follow.`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
