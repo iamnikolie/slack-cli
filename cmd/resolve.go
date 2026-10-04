@@ -121,6 +121,8 @@ type transcriptMsg struct {
 	Replies []transcriptMsg `json:"replies"`
 	// Focus marks the message `slk get` was asked about.
 	Focus bool `json:"slk_focus"`
+	// Partial replaces the reply count on a thread parent read in part.
+	Partial string `json:"slk_partial"`
 }
 
 type slackReaction struct {
@@ -259,7 +261,9 @@ func renderTranscript(data json.RawMessage, d *cache.Directory, channel, baseURL
 	for _, m := range msgs {
 		writeTranscriptMsg(&b, m, "", byID, d, channel, baseURL, thread)
 		if m.Replies == nil {
-			if m.ReplyCount > 0 {
+			if m.Partial != "" {
+				fmt.Fprintf(&b, "  ↳ %s (ts=%s)\n", m.Partial, m.TS)
+			} else if m.ReplyCount > 0 {
 				fmt.Fprintf(&b, "  ↳ %d %s (ts=%s)\n", m.ReplyCount, plural(m.ReplyCount, "reply", "replies"), m.TS)
 			}
 			continue

@@ -182,7 +182,8 @@ Run `slk skill` for the full agent-facing reference, or `slk <command> --help`.
   fall back to their Block Kit text, or to their first attachment when they
   have only attachments. A link Slack displays as its own shortened URL prints
   once, as the full URL. Linked files (Google Drive) show as `external`.
-  `thread --since/--until` with no replies in the window says so.
+  A thread read in part (`--since/--until`, or `--limit`) says so on its parent:
+  `↳ 2 of 8 replies in the window`, `↳ latest 200 of 500 replies`.
   `--no-links` drops link lines (and swaps `permalink` for `ts` in
   `search`/`mentions` tables),
   `--max-chars N` caps each message. Link generation uses one `auth.test`

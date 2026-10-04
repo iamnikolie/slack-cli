@@ -41,16 +41,36 @@ func readThread(ctx context.Context, channel, ts string, limit int, bounds url.V
 		return err
 	}
 	paginationHint(stderr, hit, limit)
-	if err := emitTranscript(ctx, raw, channel, ts); err != nil {
-		return err
+	if !jsonOutput && outputFormat == "" && len(fieldsFlag) == 0 {
+		raw = markPartialThread(raw, ts, len(bounds) > 0)
 	}
-	if len(bounds) > 0 && !jsonOutput && outputFormat == "" && len(fieldsFlag) == 0 {
-		var msgs []transcriptMsg
-		if json.Unmarshal(raw, &msgs) == nil && len(msgs) == 1 && msgs[0].ReplyCount > 0 {
-			fmt.Printf("  ↳ 0 of %d %s in the window\n", msgs[0].ReplyCount, plural(msgs[0].ReplyCount, "reply", "replies"))
-		}
+	return emitTranscript(ctx, raw, channel, ts)
+}
+
+// markPartialThread notes on the parent how many of its replies the read
+// shows, when that is not all of them, so the transcript says the thread is
+// cut (by the --since/--until window, or by --limit keeping the latest).
+func markPartialThread(raw json.RawMessage, ts string, windowed bool) json.RawMessage {
+	msgs, err := decodeArray(raw)
+	if err != nil || len(msgs) == 0 || msgs[0]["ts"] != ts {
+		return raw
 	}
-	return nil
+	n, _ := msgs[0]["reply_count"].(json.Number)
+	count, _ := n.Int64()
+	shown := int64(len(msgs) - 1)
+	if shown >= count {
+		return raw
+	}
+	note := fmt.Sprintf("latest %d of %d %s", shown, count, plural(int(count), "reply", "replies"))
+	if windowed {
+		note = fmt.Sprintf("%d of %d %s in the window", shown, count, plural(int(count), "reply", "replies"))
+	}
+	msgs[0]["slk_partial"] = note
+	b, err := json.Marshal(msgs)
+	if err != nil {
+		return raw
+	}
+	return b
 }
 
 // fetchReplies returns a thread's parent, then its latest limit replies oldest

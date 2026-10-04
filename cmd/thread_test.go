@@ -54,3 +54,23 @@ func TestFetchRepliesKeepsLatestAcrossPages(t *testing.T) {
 	assert.Equal(t, []string{"3", "1"}, limits)
 	assert.JSONEq(t, `[{"ts":"1.000000"},{"ts":"6.000000"},{"ts":"7.000000"},{"ts":"8.000000"}]`, string(raw))
 }
+
+func TestMarkPartialThread(t *testing.T) {
+	const parent = `{"ts":"1.000000","reply_count":8}`
+	render := func(raw string, windowed bool) string {
+		out, err := renderTranscript(markPartialThread([]byte(raw), "1.000000", windowed), nil, "", "", "1.000000")
+		require.NoError(t, err)
+		return out
+	}
+	out := render(`[`+parent+`]`, true)
+	assert.Contains(t, out, "↳ 0 of 8 replies in the window (ts=1.000000)")
+	assert.NotContains(t, out, "↳ 8 replies") // one line, not both
+
+	assert.Contains(t, render(`[`+parent+`,{"ts":"5.000000"},{"ts":"6.000000"}]`, true), "↳ 2 of 8 replies in the window")
+	assert.Contains(t, render(`[`+parent+`,{"ts":"6.000000"}]`, false), "↳ latest 1 of 8 replies")
+
+	full := `[{"ts":"1.000000","reply_count":1},{"ts":"2.000000"}]`
+	assert.JSONEq(t, full, string(markPartialThread([]byte(full), "1.000000", true)))
+	noCount := `[{"ts":"1.000000"}]`
+	assert.JSONEq(t, noCount, string(markPartialThread([]byte(noCount), "1.000000", true)))
+}
