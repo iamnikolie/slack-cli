@@ -71,10 +71,29 @@ func expandMentions(text string, d *cache.Directory) string {
 			if label == url || "mailto:"+label == url {
 				return label
 			}
+			if shortenedURL(label, url) {
+				return url
+			}
 			return fmt.Sprintf("%s (%s)", label, url)
 		}
 	})
 	return entityReplacer.Replace(out)
+}
+
+// shortenedURL reports whether label is Slack's own display form of url: the
+// URL without its scheme, possibly with a middle part elided ("host/a/…/847").
+func shortenedURL(label, url string) bool {
+	bare := url
+	for _, scheme := range []string{"https://", "http://"} {
+		bare = strings.TrimPrefix(bare, scheme)
+	}
+	if label == bare || label == strings.TrimSuffix(bare, "/") {
+		return true
+	}
+	head, tail, elided := strings.Cut(label, "…")
+	return elided && head != "" && strings.HasPrefix(bare, head) &&
+		strings.HasSuffix(strings.TrimSuffix(bare, "/"), strings.TrimSuffix(tail, "/")) &&
+		len(head)+len(tail) < len(bare)
 }
 
 // truncateText caps s at max runes (0 = no cap) and says how much was cut.

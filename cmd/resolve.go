@@ -291,19 +291,32 @@ func writeTranscriptMsg(b *strings.Builder, m transcriptMsg, prefix string, byID
 	if m.Edited != nil {
 		author += " (edited)"
 	}
-	text = truncateText(expandMentions(text, d), maxChars)
+	var attachments []string
+	for _, a := range m.Attachments {
+		if line := attachmentLine(a, d); line != "" {
+			attachments = append(attachments, line)
+		}
+	}
+	if strings.TrimSpace(text) == "" && len(attachments) > 0 {
+		// a bot that posts only attachments: its first one is the message
+		text, attachments = attachments[0], attachments[1:]
+	} else {
+		text = truncateText(expandMentions(text, d), maxChars)
+	}
 	if pad != "" {
 		// keep a multi-line reply inside its thread's indent
 		text = strings.ReplaceAll(text, "\n", "\n"+pad+"  ")
 	}
 	fmt.Fprintf(b, "%s[%s] ts=%s %s: %s\n", prefix, tsClock(m.TS), m.TS, author, text)
 	for _, file := range m.Files {
-		fmt.Fprintf(b, "%s  file %s: %s (%s, %d bytes)\n", pad, file.ID, file.Name, file.MIME, file.Size)
-	}
-	for _, a := range m.Attachments {
-		if line := attachmentLine(a, d); line != "" {
-			fmt.Fprintf(b, "%s  ▸ %s\n", pad, line)
+		size := fmt.Sprintf("%d bytes", file.Size)
+		if file.IsExternal {
+			size = "external" // Google Drive and other linked files have no size
 		}
+		fmt.Fprintf(b, "%s  file %s: %s (%s, %s)\n", pad, file.ID, file.Name, file.MIME, size)
+	}
+	for _, line := range attachments {
+		fmt.Fprintf(b, "%s  ▸ %s\n", pad, line)
 	}
 	if len(m.Reactions) > 0 {
 		rs := make([]string, len(m.Reactions))
@@ -412,12 +425,12 @@ func emitTranscript(ctx context.Context, raw json.RawMessage, channel, thread st
 	if jsonOutput || outputFormat == "json" {
 		return writeRaw(projectList(raw, fieldsFlag))
 	}
-	if outputFormat != "" || len(fieldsFlag) > 0 {
-		return renderTable(flattenReplies(raw), []string{"ts", "user", "text", "thread_ts", "reply_count"})
-	}
 	d, err := directoryFor(ctx, channel)
 	if err != nil {
 		return err
+	}
+	if outputFormat != "" || len(fieldsFlag) > 0 {
+		return renderTable(readableText(flattenReplies(raw), d), []string{"ts", "user", "text", "thread_ts", "reply_count"})
 	}
 	baseURL := ""
 	if !noLinks {
@@ -429,6 +442,25 @@ func emitTranscript(ctx context.Context, raw json.RawMessage, channel, thread st
 	}
 	_, err = os.Stdout.WriteString(out)
 	return err
+}
+
+// readableText gives table/CSV rows the transcript's text: Slack markup
+// expanded and capped by --max-chars. JSON keeps the raw wire text.
+func readableText(raw json.RawMessage, d *cache.Directory) json.RawMessage {
+	msgs, err := decodeArray(raw)
+	if err != nil {
+		return raw
+	}
+	for _, m := range msgs {
+		if text, ok := m["text"].(string); ok {
+			m["text"] = truncateText(expandMentions(text, d), maxChars)
+		}
+	}
+	b, err := json.Marshal(msgs)
+	if err != nil {
+		return raw
+	}
+	return b
 }
 
 // identityCache memoizes auth.test for one process: transcripts need the

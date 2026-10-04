@@ -121,6 +121,7 @@ func fetchChannelInfo(ctx context.Context, id string) (*channelInfo, error) {
 				}
 			}
 			info.Pins, _ = json.Marshal(msgs)
+			info.Pins = sortByTS(info.Pins, false) // pins.list orders by pin time
 		}
 	}
 	return info, nil

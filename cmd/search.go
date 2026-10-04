@@ -96,7 +96,11 @@ func emitSearchMatches(ctx context.Context, result searchResult) error {
 	if err != nil {
 		return err
 	}
-	return emitList(b, []string{"date", "channel.name", "username", "text", "permalink"})
+	cols := []string{"date", "channel.name", "username", "text", "permalink"}
+	if noLinks {
+		cols[len(cols)-1] = "ts" // still addressable: slk get #channel <ts>
+	}
+	return emitList(b, cols)
 }
 
 type searchFilters struct {

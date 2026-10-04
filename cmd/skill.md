@@ -19,7 +19,9 @@ have no DM with yet), `pins:read` + `bookmarks:read` (channel info).
 - `--dry-run` on any write command: prints the resolved plan, sends nothing.
   Use it before posting as the user when channel/thread resolution matters.
 - Transcripts: `--no-links` drops permalink lines (ts= stays), `--max-chars N`
-  caps each message. Both cut tokens a lot on busy channels.
+  caps each message. Both cut tokens a lot on busy channels. Table/CSV/TSV text
+  is expanded and capped the same way (JSON keeps Slack's raw text); in
+  `search`/`mentions` tables `--no-links` swaps the permalink column for `ts`.
 - JSON uses readable UTF-8; all fields are preserved unless `--fields` selects
   a subset. Dotted object paths are supported (output keys retain the dots).
 - Prefer plain transcripts for reading. Line format:

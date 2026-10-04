@@ -130,7 +130,7 @@ Run `slk skill` for the full agent-facing reference, or `slk <command> --help`.
   `--filter`, `--limit`. DMs (im) list under the partner's handle.
 - `slk channel view <#chan|id>` — metadata.
 - `slk channel info <#chan|id>` — topic, purpose, members, creator, bookmarks
-  and pinned messages; a section whose scope is missing is reported, not fatal.
+  and pinned messages (oldest first); a section whose scope is missing is reported, not fatal.
 - Listings include `type` (`public`, `private`, `im`, `mpim`).
 - `slk activity --limit 200` — overview grouped by channel, newest first:
   latest indexed message date, type, preview, permalink, and sampled count.
@@ -161,7 +161,8 @@ Run `slk skill` for the full agent-facing reference, or `slk <command> --help`.
   - `--replies` expands every thread inline under its parent (one
     `conversations.replies` call per thread; the latest `--replies-limit N`,
     default 50, after `↳ +K earlier replies: slk thread …`). JSON nests them under `replies`;
-    CSV/TSV/table emit one row per message.
+    CSV/TSV/table emit one row per message, text expanded and `--max-chars`
+    capped as in the transcript.
   - `--thread <ts|permalink>` reads one thread instead of the channel (same as
     `slk thread`); a thread permalink as the only argument implies it.
 - `slk thread <#chan|id> <ts|permalink>` — all replies in a thread
@@ -178,7 +179,12 @@ Run `slk skill` for the full agent-facing reference, or `slk <command> --help`.
   offsets, `ts=` in each header, decoded markup (`@name`, `#channel`,
   `label (url)`, unescaped `&<>`), an `(edited)` mark, files, attachments and
   link unfurls (`▸`), reactions, and message links. Bot messages with empty text
-  fall back to their Block Kit text. `--no-links` drops link lines,
+  fall back to their Block Kit text, or to their first attachment when they
+  have only attachments. A link Slack displays as its own shortened URL prints
+  once, as the full URL. Linked files (Google Drive) show as `external`.
+  `thread --since/--until` with no replies in the window says so.
+  `--no-links` drops link lines (and swaps `permalink` for `ts` in
+  `search`/`mentions` tables),
   `--max-chars N` caps each message. Link generation uses one `auth.test`
   lookup per run; failure emits a warning and leaves messages readable.
 

@@ -41,7 +41,16 @@ func readThread(ctx context.Context, channel, ts string, limit int, bounds url.V
 		return err
 	}
 	paginationHint(stderr, hit, limit)
-	return emitTranscript(ctx, raw, channel, ts)
+	if err := emitTranscript(ctx, raw, channel, ts); err != nil {
+		return err
+	}
+	if len(bounds) > 0 && !jsonOutput && outputFormat == "" && len(fieldsFlag) == 0 {
+		var msgs []transcriptMsg
+		if json.Unmarshal(raw, &msgs) == nil && len(msgs) == 1 && msgs[0].ReplyCount > 0 {
+			fmt.Printf("  ↳ 0 of %d %s in the window\n", msgs[0].ReplyCount, plural(msgs[0].ReplyCount, "reply", "replies"))
+		}
+	}
+	return nil
 }
 
 // fetchReplies returns a thread's parent, then its latest limit replies oldest

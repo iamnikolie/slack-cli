@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -105,4 +106,40 @@ func TestTranscriptRichMessage(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, out, "https://acme.slack.com")
 	assert.Contains(t, out, ": look…(+19 chars)\n")
+}
+
+func TestExpandMentionsCollapsesSlackShortenedLinks(t *testing.T) {
+	const mr = "https://gitlab.example.com/erp/app/-/merge_requests/832"
+	for in, want := range map[string]string{
+		"<" + mr + "|gitlab.example.com/erp/app/…/832>":                mr, // Slack elided the middle
+		"<" + mr + "|gitlab.example.com/erp/app/-/merge_requests/832>": mr, // scheme dropped only
+		"<" + mr + "|MR !832>":                        "MR !832 (" + mr + ")", // a real label stays
+		"<" + mr + "|gitlab.example.com/other/…/999>": "gitlab.example.com/other/…/999 (" + mr + ")",
+	} {
+		assert.Equal(t, want, expandMentions(in, nil), in)
+	}
+}
+
+func TestTranscriptLiftsBotAttachmentAndMarksExternalFiles(t *testing.T) {
+	oldNoLinks := noLinks
+	t.Cleanup(func() { noLinks = oldNoLinks })
+	noLinks = true
+	out, err := renderTranscript([]byte(`[{"username":"Alertmanager","text":"","ts":"1700000000.000100",
+	  "attachments":[{"title":"FIRING Heartbeat"},{"title":"second"}],
+	  "files":[{"id":"F1","name":"Plan","mimetype":"application/vnd.google-apps.document","size":0,"is_external":true}]}]`), nil, "", "", "")
+	require.NoError(t, err)
+	assert.Contains(t, out, "@Alertmanager: FIRING Heartbeat\n")
+	assert.Equal(t, 1, strings.Count(out, "FIRING Heartbeat"))
+	assert.Contains(t, out, "  ▸ second\n")
+	assert.Contains(t, out, "file F1: Plan (application/vnd.google-apps.document, external)")
+}
+
+func TestReadableTextExpandsAndCaps(t *testing.T) {
+	oldMax := maxChars
+	t.Cleanup(func() { maxChars = oldMax })
+	maxChars = 8
+	d := &cache.Directory{Users: []cache.User{{ID: "U1", Name: "ann"}}}
+	msgs, err := decodeArray(readableText([]byte(`[{"ts":"1","text":"<@U1> hello world"}]`), d))
+	require.NoError(t, err)
+	assert.Equal(t, "@ann hel…(+8 chars)", msgs[0]["text"])
 }
