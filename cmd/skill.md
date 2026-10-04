@@ -55,8 +55,8 @@ miss it refetches once, and a transcript's channel missing from it is looked up
   followed threads with unread replies (only the new replies). No channels →
   active ones discovered via search. Your own messages are skipped. Read-only.
 - `slk mentions [--since 7d] [--limit 50]` — messages that @-mention you.
-- `slk digest [#chan...] [--since 1d] [--limit 100] [--replies=false]` — one
-  transcript across channels, threads inline. New replies under parents older
+- `slk digest [#chan...] [--since 1d] [--until …] [--limit 100] [--replies=false]` — one
+  transcript across channels, threads inline; `--until` ends the window. New replies under parents older
   than --since are not shown (use `unread`).
 - `slk tail <#chan...> [--since 1d] [--peek]` — only what is new since the last
   tail of each channel (cursors in ~/.slk/<ws>/cursors.json). For loops; an

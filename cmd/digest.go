@@ -75,25 +75,55 @@ func emitSections(ctx context.Context, sections []section, empty string) error {
 	return nil
 }
 
-// channelWindow returns up to limit messages after oldest, oldest first.
+// channelWindow returns up to limit messages after oldest (and before until,
+// when set), oldest first.
 // With only oldest set Slack returns the messages right after it (the earliest
 // of the window, which tail and get's after-context want).
-func channelWindow(ctx context.Context, channel, oldest string, limit int) (json.RawMessage, bool, error) {
+func channelWindow(ctx context.Context, channel, oldest, until string, limit int) (json.RawMessage, bool, error) {
 	q := url.Values{}
 	q.Set("channel", channel)
 	q.Set("oldest", oldest)
+	// No latest: Slack would then page from until backwards and a capped read
+	// would keep the last N, not the first. Messages past until are cut here.
 	raw, hit, err := cli.Paginate(ctx, "conversations.history", q, "messages", limit)
 	if err != nil {
 		return nil, false, err
 	}
-	return sortByTS(raw, false), hit, nil
+	raw = sortByTS(raw, false)
+	if until == "" {
+		return raw, hit, nil
+	}
+	var msgs []json.RawMessage
+	if err := json.Unmarshal(raw, &msgs); err != nil {
+		return nil, false, fmt.Errorf("channelWindow: %w", err)
+	}
+	kept := msgs[:0]
+	for _, m := range msgs {
+		var h struct {
+			TS string `json:"ts"`
+		}
+		if json.Unmarshal(m, &h) == nil && h.TS < until {
+			kept = append(kept, m)
+		}
+	}
+	if len(kept) < len(msgs) {
+		hit = false // the read reached past the window: nothing in it was left out
+	}
+	raw, err = json.Marshal(kept)
+	return raw, hit, err
 }
 
-// activeChannels finds channels with indexed messages since t via search, most
-// recent first. Search is a sample: channels it does not index stay invisible.
-func activeChannels(ctx context.Context, since time.Time) ([]string, error) {
-	// after: is exclusive by day, so step back one day and filter by ts below.
+// activeChannels finds channels with indexed messages in [since, until) via
+// search (zero until = no end), most recent first. Search is a sample:
+// channels it does not index stay invisible.
+func activeChannels(ctx context.Context, since, until time.Time) ([]string, error) {
+	// after:/before: are exclusive by day, so widen by a day and filter by ts below.
 	query := "after:" + since.AddDate(0, 0, -1).Format("2006-01-02")
+	untilTS := ""
+	if !until.IsZero() {
+		query += " before:" + until.AddDate(0, 0, 1).Format("2006-01-02")
+		untilTS = tsOf(until)
+	}
 	result, err := fetchSearch(ctx, query, 1000, "desc")
 	if err != nil {
 		return nil, err
@@ -108,7 +138,7 @@ func activeChannels(ctx context.Context, since time.Time) ([]string, error) {
 				ID string `json:"id"`
 			} `json:"channel"`
 		}
-		if json.Unmarshal(raw, &m) != nil || m.Channel.ID == "" || m.TS < sinceTS || seen[m.Channel.ID] {
+		if json.Unmarshal(raw, &m) != nil || m.Channel.ID == "" || m.TS < sinceTS || (untilTS != "" && m.TS >= untilTS) || seen[m.Channel.ID] {
 			continue
 		}
 		seen[m.Channel.ID] = true
@@ -121,9 +151,9 @@ func activeChannels(ctx context.Context, since time.Time) ([]string, error) {
 }
 
 // channelArgs resolves explicit channel args, or discovers active ones.
-func channelArgs(ctx context.Context, args []string, since time.Time) ([]string, error) {
+func channelArgs(ctx context.Context, args []string, since, until time.Time) ([]string, error) {
 	if len(args) == 0 {
-		return activeChannels(ctx, since)
+		return activeChannels(ctx, since, until)
 	}
 	ids := make([]string, 0, len(args))
 	for _, a := range args {
@@ -197,7 +227,7 @@ shows its thread: the parent plus N replies around it.`,
 		}
 		msgs := sortByTS(before, false)
 		if getContext > 0 {
-			after, _, err := channelWindow(ctx, channel, ts, getContext)
+			after, _, err := channelWindow(ctx, channel, ts, "", getContext)
 			if err != nil {
 				return err
 			}
@@ -275,6 +305,7 @@ func concatArrays(a, b json.RawMessage) json.RawMessage {
 
 var (
 	digestSince        string
+	digestUntil        string
 	digestLimit        int
 	digestReplies      bool
 	digestRepliesLimit int
@@ -285,24 +316,39 @@ var digestCmd = &cobra.Command{
 	Use:   "digest [#channel...]",
 	Short: "One transcript across channels since a time, threads expanded",
 	Long: `Transcripts of several channels since --since (default 1d), oldest first,
-with thread replies inline. Without channels, active ones are discovered via
+with thread replies inline. --until ends the window (same forms as --since);
+--limit keeps the first N messages of it per channel, and a thread shows its
+replies whenever they came. Without channels, active ones are discovered via
 search (a sample; pass channels to be exhaustive). New replies under parents
 older than --since do not appear: use 'slk unread' for those.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
-		since, err := parsePast(digestSince, time.Now())
+		now := time.Now()
+		since, err := parsePast(digestSince, now)
 		if err != nil {
 			return err
 		}
-		ids, err := channelArgs(ctx, args, since)
+		var until time.Time
+		untilTS, empty := "", "No messages since "+since.Format("2006-01-02 15:04 -07:00")+"."
+		if digestUntil != "" {
+			if until, err = parsePast(digestUntil, now); err != nil {
+				return err
+			}
+			if !until.After(since) {
+				return fmt.Errorf("--until (%s) is not after --since (%s): the window is empty", until.Format("2006-01-02 15:04:05 -07:00"), since.Format("2006-01-02 15:04:05 -07:00"))
+			}
+			untilTS = tsOf(until)
+			empty = "No messages between " + since.Format("2006-01-02 15:04 -07:00") + " and " + until.Format("2006-01-02 15:04 -07:00") + "."
+		}
+		ids, err := channelArgs(ctx, args, since, until)
 		if err != nil {
 			return err
 		}
-		sections, err := channelSections(ctx, ids, func(string) string { return tsOf(since) }, nil)
+		sections, err := channelSections(ctx, ids, func(string) string { return tsOf(since) }, untilTS, nil)
 		if err != nil {
 			return err
 		}
-		return emitSections(ctx, sections, "No messages since "+since.Format("2006-01-02 15:04 -07:00")+".")
+		return emitSections(ctx, sections, empty)
 	},
 }
 
@@ -324,7 +370,7 @@ shown here — 'slk unread' covers threads you follow.`,
 		if err != nil {
 			return err
 		}
-		ids, err := channelArgs(ctx, args, since)
+		ids, err := channelArgs(ctx, args, since, time.Time{})
 		if err != nil {
 			return err
 		}
@@ -341,7 +387,7 @@ shown here — 'slk unread' covers threads you follow.`,
 			return c
 		}
 		moved := cache.Cursors{}
-		sections, err := channelSections(ctx, ids, oldest, moved)
+		sections, err := channelSections(ctx, ids, oldest, "", moved)
 		if err != nil {
 			return err
 		}
@@ -358,17 +404,17 @@ shown here — 'slk unread' covers threads you follow.`,
 	},
 }
 
-// channelSections reads each channel from oldest(id); newest, when non-nil,
-// collects the latest ts seen per channel.
-func channelSections(ctx context.Context, ids []string, oldest func(string) string, newest cache.Cursors) ([]section, error) {
+// channelSections reads each channel from oldest(id) up to until ("" = now);
+// newest, when non-nil, collects the latest ts seen per channel.
+func channelSections(ctx context.Context, ids []string, oldest func(string) string, until string, newest cache.Cursors) ([]section, error) {
 	var sections []section
 	for _, id := range ids {
-		raw, hit, err := channelWindow(ctx, id, oldest(id), digestLimit)
+		raw, hit, err := channelWindow(ctx, id, oldest(id), until, digestLimit)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", id, err)
 		}
 		if hit {
-			fmt.Fprintf(stderr, "%s: showing the first %d messages; pass --limit %d for more\n", id, digestLimit, digestLimit*2)
+			fmt.Fprintf(stderr, "%s: showing the first %d %s; pass --limit %d for more\n", id, digestLimit, plural(digestLimit, "message", "messages"), digestLimit*2)
 		}
 		if newest != nil {
 			var msgs []struct {
@@ -413,7 +459,7 @@ Your own messages are skipped. Reading here does not mark anything read.`,
 		if err != nil {
 			return err
 		}
-		ids, err := channelArgs(ctx, args, since)
+		ids, err := channelArgs(ctx, args, since, time.Time{})
 		if err != nil {
 			return err
 		}
@@ -459,7 +505,7 @@ func unreadIn(ctx context.Context, channel, me, since string) ([]map[string]any,
 		return nil, err
 	}
 	lastRead := env.Channel.LastRead
-	raw, _, err := channelWindow(ctx, channel, since, unreadLimit)
+	raw, _, err := channelWindow(ctx, channel, since, "", unreadLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -564,6 +610,7 @@ func init() {
 		c.Flags().IntVar(&digestRepliesLimit, "replies-limit", 20, "max replies per thread")
 	}
 	tailCmd.Flags().BoolVar(&tailPeek, "peek", false, "do not move cursors")
+	digestCmd.Flags().StringVar(&digestUntil, "until", "", "end of the window (same forms as --since); default now")
 
 	unreadCmd.Flags().StringVar(&unreadSince, "since", "7d", "how far back to look for activity")
 	unreadCmd.Flags().IntVar(&unreadLimit, "limit", 200, "max messages scanned per channel")

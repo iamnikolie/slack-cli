@@ -209,3 +209,32 @@ func TestTailExplicitSinceNeverRereadsBehindCursor(t *testing.T) {
 	assert.Equal(t, recent, oldest["C0123456"])  // cursor is later than --since: cursor wins
 	assert.Greater(t, oldest["C0654321"], stale) // --since caps a stale cursor
 }
+
+func TestChannelWindowCutsAtUntil(t *testing.T) {
+	fakeSlack(t, map[string]func(map[string]string) string{
+		"conversations.history": func(f map[string]string) string {
+			assert.Empty(t, f["latest"], "latest would make a capped read keep the last N")
+			// oldest alone: Slack returns the earliest messages after it
+			return `{"ok":true,"messages":[{"ts":"1700000300.000000"},{"ts":"1700000200.000000"},{"ts":"1700000100.000000"}],
+			  "response_metadata":{"next_cursor":"more"}}`
+		},
+	})
+	raw, hit, err := channelWindow(context.Background(), "C0123456", "1700000000.000000", "1700000250.000000", 3)
+	require.NoError(t, err)
+	assert.False(t, hit) // the read went past until, so the window is complete
+	assert.JSONEq(t, `[{"ts":"1700000100.000000"},{"ts":"1700000200.000000"}]`, string(raw))
+
+	_, hit, err = channelWindow(context.Background(), "C0123456", "1700000000.000000", "1700000900.000000", 3)
+	require.NoError(t, err)
+	assert.True(t, hit) // all 3 inside the window and more may follow
+}
+
+func TestDigestRejectsEmptyWindow(t *testing.T) {
+	oldSince, oldUntil := digestSince, digestUntil
+	t.Cleanup(func() { digestSince, digestUntil = oldSince, oldUntil })
+	digestSince, digestUntil = "1d", "2d"
+	digestCmd.SetContext(context.Background())
+	err := digestCmd.RunE(digestCmd, []string{"C0123456"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--until")
+}

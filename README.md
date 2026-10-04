@@ -146,8 +146,9 @@ Run `slk skill` for the full agent-facing reference, or `slk <command> --help`.
   channels, active ones are discovered through search. Read-only: nothing is
   marked read.
 - `slk mentions --since 7d` — messages that mention you.
-- `slk digest [#chan...] --since 1d` — one transcript across channels with
-  threads inline (`--replies=false` to collapse them).
+- `slk digest [#chan...] --since 1d [--until 2026-10-03]` — one transcript
+  across channels with threads inline (`--replies=false` to collapse them).
+  `--until` ends the window; `--limit` keeps its first N messages per channel.
 - `slk tail <#chan...>` — only what is new since the previous `tail` of each
   channel; cursors live in `~/.slk/<profile>/cursors.json` (`--peek` leaves
   them). A channel's first tail starts at `--since` (default 1d); an explicit
