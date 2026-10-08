@@ -82,17 +82,19 @@ func expandMentions(text string, d *cache.Directory) string {
 
 // reAtName matches a typed "@handle" that is not already Slack markup: not
 // after "<" or "|" (<@U…>, <url|@label>), and not inside a word or an email
-// address. Group 1 is the character before the "@", group 2 the handle.
-var reAtName = regexp.MustCompile(`(^|[^\w<|@./-])@([\w][\w.-]*)`)
+// address. An underscore may precede it, so _@name_ (italic) still links.
+// Group 1 is the character before the "@", group 2 the handle.
+var reAtName = regexp.MustCompile(`(^|[^A-Za-z0-9<|@./-])@([\w][\w.-]*)`)
 
-// reCode matches fenced code blocks and inline code spans, which keep "@" as
-// typed.
-var reCode = regexp.MustCompile("(?s)```.*?```|`[^`\n]*`")
+// reCode matches spans whose "@" stays as typed: fenced code blocks (``` or
+// ~~~), inline code, and existing Slack markup such as <url|label>, where a
+// nested <@U…> would break the link.
+var reCode = regexp.MustCompile("(?s)```.*?```|~~~.*?~~~|`[^`\n]*`|<[^<>\n]*>")
 
 // linkMentions rewrites "@handle" for each known workspace user into Slack's
 // <@U…> mention. Slack renders a typed "@handle" as plain text and notifies
 // nobody, in Markdown and mrkdwn alike. Handles match the user name
-// case-insensitively; trailing dots and dashes are punctuation. Code keeps its
+// case-insensitively; trailing dots, dashes and underscores are punctuation. Code keeps its
 // text, and unknown handles are left as typed and returned so the caller can
 // warn.
 func linkMentions(text string, d *cache.Directory) (string, []string) {
@@ -117,7 +119,7 @@ func linkMentions(text string, d *cache.Directory) (string, []string) {
 					return g[1] + "<@" + id + ">" + tail
 				}
 				last := name[len(name)-1]
-				if last != '.' && last != '-' {
+				if last != '.' && last != '-' && last != '_' {
 					break
 				}
 				name, tail = name[:len(name)-1], string(last)+tail

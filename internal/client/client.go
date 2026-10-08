@@ -175,7 +175,7 @@ func (c *Client) Call(ctx context.Context, method string, params url.Values) (js
 			return nil, fmt.Errorf("client.Call: decode: %w", decodeErr)
 		}
 		if !head.OK {
-			return nil, fmt.Errorf("Slack response did not confirm success")
+			return nil, fmt.Errorf("slack response did not confirm success")
 		}
 		return b, nil
 	}

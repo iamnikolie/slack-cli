@@ -55,11 +55,13 @@ func deliver(ctx context.Context, o outgoing, f *msgFlags) (json.RawMessage, err
 	}
 	var unknown []string
 	if strings.Contains(o.Text, "@") {
-		d, err := loadDirectory(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("resolving @mentions: %w", err)
+		// An "@" may be an email or a handle; a directory that cannot load
+		// (no cache, missing users:read) must not block the message itself.
+		if d, err := loadDirectory(ctx); err != nil {
+			fmt.Fprintf(stderr, "@mentions not resolved, sent as typed: %v\n", err)
+		} else {
+			o.Text, unknown = linkMentions(o.Text, d)
 		}
-		o.Text, unknown = linkMentions(o.Text, d)
 	}
 	field := "markdown_text"
 	if f.mrkdwn {
