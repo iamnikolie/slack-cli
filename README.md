@@ -196,6 +196,10 @@ Run `slk skill` for the full agent-facing reference, or `slk <command> --help`.
 - Text is sent as standard Markdown (`markdown_text`: `**bold**`,
   `[label](url)`, lists, code; 12,000 characters max). `--mrkdwn` sends Slack's
   own mrkdwn in `text` instead.
+- `@username` of a known user is sent as a real mention (`<@U…>`); Slack
+  itself renders a typed `@name` as plain text. Code spans keep it as typed;
+  unknown handles are sent as typed with a warning on stderr (`slk sync`
+  refreshes the user list).
 - `--dry-run` (any write command) prints the resolved channel, thread, format
   and text without sending.
 - `slk send <#chan|@user|id> <text>` — `--thread <ts|permalink>`, `--at`,

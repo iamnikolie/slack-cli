@@ -42,7 +42,8 @@ func (f *msgFlags) register(c *cobra.Command, schedule bool) {
 }
 
 // deliver posts, edits or schedules o. Text goes out as standard Markdown
-// (markdown_text) unless --mrkdwn asks for Slack's own syntax. With --dry-run
+// (markdown_text) unless --mrkdwn asks for Slack's own syntax; either way a
+// typed "@handle" of a known user becomes a real <@U…> mention. With --dry-run
 // nothing is sent and the resolved plan is returned instead.
 func deliver(ctx context.Context, o outgoing, f *msgFlags) (json.RawMessage, error) {
 	method := "chat.postMessage"
@@ -51,6 +52,14 @@ func deliver(ctx context.Context, o outgoing, f *msgFlags) (json.RawMessage, err
 		method = "chat.update"
 	case !o.At.IsZero():
 		method = "chat.scheduleMessage"
+	}
+	var unknown []string
+	if strings.Contains(o.Text, "@") {
+		d, err := loadDirectory(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("resolving @mentions: %w", err)
+		}
+		o.Text, unknown = linkMentions(o.Text, d)
 	}
 	field := "markdown_text"
 	if f.mrkdwn {
@@ -84,7 +93,13 @@ func deliver(ctx context.Context, o outgoing, f *msgFlags) (json.RawMessage, err
 		if !o.At.IsZero() {
 			plan["post_at"] = o.At.Format("2006-01-02 15:04 -07:00")
 		}
+		if len(unknown) > 0 {
+			plan["unknown_mentions"] = unknown
+		}
 		return json.Marshal(plan)
+	}
+	if len(unknown) > 0 {
+		fmt.Fprintf(stderr, "not a known user, sent as plain text (run `slk sync` if the user is new): %s\n", strings.Join(unknown, ", "))
 	}
 	return cli.Call(ctx, method, q)
 }
@@ -92,7 +107,7 @@ func deliver(ctx context.Context, o outgoing, f *msgFlags) (json.RawMessage, err
 // emitDelivered prints a delivery result (or dry-run plan).
 func emitDelivered(raw json.RawMessage, f *msgFlags) error {
 	if dryRun {
-		return emitObj(raw, []string{"dry_run", "method", "channel", "channel_name", "thread_ts", "ts", "post_at", "format", "text"})
+		return emitObj(raw, []string{"dry_run", "method", "channel", "channel_name", "thread_ts", "ts", "post_at", "format", "text", "unknown_mentions"})
 	}
 	if _, err := fieldString(raw, "scheduled_message_id"); err == nil {
 		if f.idOnly {

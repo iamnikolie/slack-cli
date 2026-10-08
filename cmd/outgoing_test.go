@@ -121,3 +121,43 @@ func TestReactTargetsExactMessage(t *testing.T) {
 	assert.Equal(t, "eyes", got[1]["name"])
 	assert.Error(t, runReact(context.Background(), []string{"1700000000.000100", "eyes"}, false))
 }
+
+func TestLinkMentions(t *testing.T) {
+	d := &cache.Directory{Users: []cache.User{{ID: "U1", Name: "andriir"}, {ID: "U2", Name: "oleksii.k"}}}
+	cases := map[string]struct{ in, want string }{
+		"start and middle":        {"@andriir please look, @Oleksii.K too", "<@U1> please look, <@U2> too"},
+		"trailing punctuation":    {"thanks @andriir. And (@andriir)", "thanks <@U1>. And (<@U1>)"},
+		"existing markup":         {"<@U1> and <https://x.io|@andriir>", "<@U1> and <https://x.io|@andriir>"},
+		"email and url":           {"a@andriir.com https://h/@andriir", "a@andriir.com https://h/@andriir"},
+		"code kept as typed":      {"run `slk dm @andriir` or\n```\n@andriir\n```\n@andriir", "run `slk dm @andriir` or\n```\n@andriir\n```\n<@U1>"},
+		"broadcast left as typed": {"@here look", "@here look"},
+	}
+	for name, c := range cases {
+		got, _ := linkMentions(c.in, d)
+		assert.Equal(t, c.want, got, name)
+	}
+	_, unknown := linkMentions("@andriir @nobody and @nobody @here", d)
+	assert.Equal(t, []string{"@nobody"}, unknown)
+}
+
+func TestDeliverLinksMentions(t *testing.T) {
+	var got map[string]string
+	fakeSlack(t, map[string]func(map[string]string) string{
+		"chat.postMessage": func(f map[string]string) string {
+			got = f
+			return `{"ok":true,"channel":"C0123456","ts":"1700000000.000100"}`
+		},
+	})
+	oldStderr := stderr
+	var warn strings.Builder
+	t.Cleanup(func() { dir, stderr = nil, oldStderr })
+	dir = &cache.Directory{Users: []cache.User{{ID: "U1", Name: "andriir"}}}
+	stderr = &warn
+	_, err := deliver(context.Background(), outgoing{Channel: "C0123456", Text: "@andriir and @ghost please review"}, &msgFlags{})
+	require.NoError(t, err)
+	assert.Equal(t, "<@U1> and @ghost please review", got["markdown_text"])
+	assert.Contains(t, warn.String(), "@ghost")
+	_, err = deliver(context.Background(), outgoing{Channel: "C0123456", Text: "@andriir hi"}, &msgFlags{mrkdwn: true})
+	require.NoError(t, err)
+	assert.Equal(t, "<@U1> hi", got["text"])
+}

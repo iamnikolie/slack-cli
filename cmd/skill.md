@@ -91,6 +91,9 @@ miss it refetches once, and a transcript's channel missing from it is looked up
 ### Writing (as the user — consider `--dry-run` first)
 - Text is standard Markdown (`**bold**`, `[label](url)`, lists, code) sent as
   `markdown_text` (12k chars max). `--mrkdwn` sends Slack's own syntax instead.
+- `@username` of a known user becomes a real mention (`<@U…>`) in both formats;
+  code spans keep it as typed. Unknown handles go out as plain text, with a
+  stderr warning (dry run: `unknown_mentions`). Never hand-type `@name` hoping it pings.
 - `slk send <#chan|@user|id> <text> [--thread ts|permalink] [--at time] [--body-file -] [--id-only]`
 - `slk reply <#chan|id> <ts|permalink> <text> [--at time]` — thread reply.
 - `slk dm <@user> <text> [--at time]` — opens the DM if needed (`im:write`).
